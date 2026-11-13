@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: MIT
+
+# A vX.Y.Z tag publishes a Windows x64 release. X.Y.Z must match CMakeLists.txt, with notes in
+# docs/release-notes/X.Y.Z.md. The gsfrip-X.Y.Z-win-x64.zip package contains gsfrip.exe, README.md, LICENSE and
+# THIRD-PARTY-NOTICES.md.
+#
+# A manual run (Actions > Release > Run workflow) builds the same zip and uploads it as a workflow artifact, without
+# publishing anything.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Read the version and check for a matching tag and release notes.
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - id: version
+        uses: ./externals/xsflib/ci/release-version
+        with:
+          project: gsf
+
+  windows:
+    needs: version
+    name: Windows x64
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: ./externals/xsflib/ci/release-windows
+        with:
+          version: ${{ needs.version.outputs.version }}
+          cmake: -A x64 -T ClangCL -DGSF_TESTS=OFF
+          targets: gsfrip
+          programs: gsfrip
+          files: build/Release/gsfrip.exe
+          artifact: win-x64
+
+  package:
+    needs: [version, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: ./externals/xsflib/ci/package-converter
+        with:
+          program: gsfrip
+          version: ${{ needs.version.outputs.version }}
+
+      - uses: ./externals/xsflib/ci/release-publish
+        with:
+          title: gsf
+          version: ${{ needs.version.outputs.version }}
+          artifact: gsf-${{ needs.version.outputs.version }}

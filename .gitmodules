@@ -1,0 +1,12 @@
+[submodule "externals/xsflib"]
+	path = externals/xsflib
+	url = ../xsflib.git
+[submodule "externals/ntdlib"]
+	path = externals/ntdlib
+	url = ../ntdlib.git
+[submodule "externals/seqlib"]
+	path = externals/seqlib
+	url = ../seqlib.git
+[submodule "externals/agblib"]
+	path = externals/agblib
+	url = ../agblib.git
