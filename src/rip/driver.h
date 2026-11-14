@@ -78,8 +78,10 @@ public:
     // The tags of the game, or null for a game that gsf has no tags for.
     virtual const GameTags* Tags() const;
 
-    // The end of song `song`'s last sound in milliseconds, where a profile gives it, for a song that ends whose
-    // commands go on in silence. The length tag gives it in place of the end of the commands.
+    // The end of song `song`'s last sound in milliseconds, where a profile gives it, for a song that ends. The length
+    // tag gives it in place of the end of the commands: the commands can go on in silence after the last sound, or
+    // the samples can ring on after the commands. In the second case, the driver's SongTiming() runs to the last
+    // sound, and the coverage with it.
     virtual std::optional<long long> LastSoundMs(int song) const;
 
     // The song's length and fade, or nothing when the length can't be worked out. `silent` is set for a song that
@@ -112,5 +114,6 @@ std::unique_ptr<Driver> FindRd1(const agblib::agb::Rom& rom, std::string& error)
 std::unique_ptr<Driver> FindQuintet(const agblib::agb::Rom& rom, std::string& error);
 std::unique_ptr<Driver> FindRd2(const agblib::agb::Rom& rom, std::string& error);
 std::unique_ptr<Driver> FindMp2k(const agblib::agb::Rom& rom, std::string& error);
+std::unique_ptr<Driver> FindIte(const agblib::agb::Rom& rom, std::string& error);
 
 } // namespace gsf::rip

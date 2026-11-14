@@ -13,6 +13,10 @@ players built on mGBA play the sets.
 
 - AlphaDream's driver: Mario & Luigi: Superstar Saga and two Hamtaro games (Tottoko Hamtaro 4: Nijiiro Daikoushin
   Dechu and Tottoko Hamtaro: Hamu-Hamu Sports)
+- ITE Media's driver: Hugo: The Evil Mirror, the US release. Each song of the game's bank is a song, and it plays at
+  the music volume that the game sets for it. A song that ends plays out to its last sound. In the game, the
+  interrupted music comes back after a jingle's last row and cuts the jingle short. The audio of the game's videos
+  isn't ripped.
 - Logik State's driver, GBAModPlay: Aero the Acro-Bat: Rascal Rival Revenge, the European and US releases; Zapper, the
   US release; and Pinball Challenge Deluxe, the European release. In Aero and Zapper, each of the game's modules is a
   song, and the songs are numbered in the order of the modules in the image. Aero's set adds the part of one module that
@@ -88,8 +92,10 @@ Each mini has the tags `title`, `game`, `length`, `fade` and `utf8`, and `artist
 and a title for each song that names where the game plays it, such as "Title Screen, Circus Act 1" or "Game Over".
 The minis are numbered in the order in which a player first hears the songs in the game, so the title screen's song
 is `02`. The two songs that the game never plays come last, with "Unused" in their titles. The game over's commands go
-on in silence after its last sound. Its length is the end of that sound, with a fade of 1 s. The options below replace
-any of the tags.
+on in silence after its last sound. Its length is the end of that sound, with a fade of 1 s. For Hugo: The Evil Mirror,
+`gsfrip` knows the game's name, the composers, the developer and publisher, the date of the first release and the
+songs' titles, and the minis follow the same order. Each of its songs that ends has the end of its last sound as its
+length, with a fade of 1 s. The options below replace any of the tags.
 
 Options:
 

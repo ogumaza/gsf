@@ -92,7 +92,7 @@ std::unique_ptr<Driver> FindDriver(const agblib::agb::Rom& rom, std::string& err
 {
     error.clear();
     using Find = std::unique_ptr<Driver> (*)(const agblib::agb::Rom&, std::string&);
-    for (const Find find : {FindAlphaDream, FindLogikState, FindRd1, FindRd2, FindQuintet, FindMp2k})
+    for (const Find find : {FindAlphaDream, FindLogikState, FindRd1, FindRd2, FindQuintet, FindMp2k, FindIte})
     {
         std::unique_ptr<Driver> driver = find(rom, error);
         if (driver || !error.empty())
@@ -102,8 +102,8 @@ std::unique_ptr<Driver> FindDriver(const agblib::agb::Rom& rom, std::string& err
     }
 
     error =
-        "no sound driver that gsf rips found: AlphaDream's, Logik State's, Nintendo R&D1's, Nintendo R&D2's, "
-        "Quintet's or MP2K";
+        "no sound driver that gsf rips found: AlphaDream's, ITE Media's, Logik State's, Nintendo R&D1's, Nintendo "
+        "R&D2's, Quintet's or MP2K";
     return nullptr;
 }
 

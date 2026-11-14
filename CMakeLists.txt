@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 
 cmake_minimum_required(VERSION 3.20)
-project(gsf VERSION 0.1.0 LANGUAGES C CXX)
+project(gsf VERSION 0.2.0 LANGUAGES C CXX)
 
 # xsflib is a library for players and rippers of the PSF family. It's a submodule. Its XsflibProject.cmake sets what a
 # project built on it starts with: C++20, a release build by default, the static C runtime, the options that keep the
@@ -41,6 +41,7 @@ add_library(gsf_rip STATIC
     src/rip/driver.cpp
     src/rip/driver.h
     src/rip/drivers/alphadream.cpp
+    src/rip/drivers/ite.cpp
     src/rip/drivers/logikstate.cpp
     src/rip/drivers/logikstate.h
     src/rip/drivers/mp2k.cpp
@@ -54,7 +55,7 @@ add_library(gsf_rip STATIC
     src/rip/stub.cpp
     src/rip/stub.h
 )
-target_link_libraries(gsf_rip PUBLIC gsf_format xsflib::rip agblib::agb_system agblib::alphadream_game
+target_link_libraries(gsf_rip PUBLIC gsf_format xsflib::rip agblib::agb_system agblib::alphadream_game agblib::ite
                       agblib::sequence_export_alphadream agblib::sequence_export_logikstate agblib::rd1_game
                       agblib::sequence_export_rd1 agblib::sequence_export_quintet
                       agblib::sequence_export_rd2
@@ -78,6 +79,7 @@ if (GSF_TESTS)
     xsflib_add_project_test(gsf stub gsf_rip)
     xsflib_add_project_test(gsf rip gsf_rip)
     xsflib_add_project_test(gsf logikstate gsf_rip)
+    xsflib_add_project_test(gsf ite gsf_rip)
 
     # gsfrip reports the version it was built as.
     string(REPLACE "." "\\." version_pattern ${gsf_VERSION})
