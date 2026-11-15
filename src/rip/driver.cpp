@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "agblib/agb/gba.h"
@@ -88,11 +89,41 @@ std::optional<xsflib::rip::Timing> TimingOfReport(const agblib::sequence_export:
                                   : xsflib::rip::EndAt(frames, frame_ms, kTailMs);
 }
 
+namespace
+{
+
+using Find = std::unique_ptr<Driver> (*)(const agblib::agb::Rom&, std::string&);
+
+// A set of a game with more than one: the driver of its part of the game, and the set's name.
+struct PartSet
+{
+    Find find = nullptr;
+    const char* name = "";
+};
+
+// The games with a driver for each part, by the game code in the cartridge's header. The Legend of Zelda: A Link to the
+// Past & Four Swords plays A Link to the Past with Nintendo R&D2's driver, and its menus and Four Swords with MP2K.
+struct PartsOfGame
+{
+    std::string_view code;
+    std::vector<PartSet> sets;
+};
+
+const std::vector<PartsOfGame>& GamesWithParts()
+{
+    static const std::vector<PartsOfGame> kGames = {
+        {"AZLE", {{FindRd2, "A Link to the Past"}, {FindMp2k, "Four Swords"}}},
+    };
+    return kGames;
+}
+
+} // namespace
+
 std::unique_ptr<Driver> FindDriver(const agblib::agb::Rom& rom, std::string& error)
 {
     error.clear();
-    using Find = std::unique_ptr<Driver> (*)(const agblib::agb::Rom&, std::string&);
-    for (const Find find : {FindAlphaDream, FindLogikState, FindRd1, FindRd2, FindQuintet, FindMp2k, FindIte})
+    for (const Find find :
+         {FindAlphaDream, FindLogikState, FindRd1, FindRd2, FindQuintet, FindMp2k, FindIte, FindBrownie})
     {
         std::unique_ptr<Driver> driver = find(rom, error);
         if (driver || !error.empty())
@@ -102,9 +133,48 @@ std::unique_ptr<Driver> FindDriver(const agblib::agb::Rom& rom, std::string& err
     }
 
     error =
-        "no sound driver that gsf rips found: AlphaDream's, ITE Media's, Logik State's, Nintendo R&D1's, Nintendo "
-        "R&D2's, Quintet's or MP2K";
+        "no sound driver that gsf rips found: AlphaDream's, Brownie Brown's, ITE Media's, Logik State's, Nintendo "
+        "R&D1's, Nintendo R&D2's, Quintet's or MP2K";
     return nullptr;
+}
+
+std::vector<FoundDriver> FindDrivers(const agblib::agb::Rom& rom, std::string& error)
+{
+    std::vector<FoundDriver> drivers;
+    const std::string code = rom.GameCode();
+    for (const PartsOfGame& game : GamesWithParts())
+    {
+        if (game.code != code)
+        {
+            continue;
+        }
+
+        for (const PartSet& set : game.sets)
+        {
+            error.clear();
+            std::unique_ptr<Driver> driver = set.find(rom, error);
+            if (!driver)
+            {
+                if (error.empty())
+                {
+                    error = std::string("the set ") + set.name + " has no driver that gsf rips";
+                }
+
+                return {};
+            }
+
+            drivers.push_back({std::move(driver), set.name});
+        }
+
+        return drivers;
+    }
+
+    if (std::unique_ptr<Driver> driver = FindDriver(rom, error))
+    {
+        drivers.push_back({std::move(driver), {}});
+    }
+
+    return drivers;
 }
 
 } // namespace gsf::rip

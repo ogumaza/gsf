@@ -13,6 +13,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <regex>
 #include <set>
@@ -45,13 +46,16 @@ constexpr char kUsage[] =
     "!playlist.m3u, in a folder next to it that's named after it with \"_gsf\" added. gsfrip finds the\n"
     "game's sound driver and adds a stub that sets up the driver as the game does and starts the song\n"
     "whose number the mini stores. Each song plays on a model of the console for its length analysis\n"
-    "and for the coverage that trims the library to the bytes that the music reads.\n"
+    "and for the coverage that trims the library to the bytes that the music reads. A game with a\n"
+    "driver for each part, such as A Link to the Past & Four Swords, gets a folder for each part's set\n"
+    "inside that folder.\n"
     "\n"
-    "Drivers: AlphaDream's, Logik State's, Nintendo R&D1's, Nintendo R&D2's, Quintet's and MP2K.\n"
+    "Drivers: AlphaDream's, Brownie Brown's, ITE Media's, Logik State's, Nintendo R&D1's, Nintendo R&D2's,\n"
+    "Quintet's and MP2K.\n"
     "\n"
     "options:\n"
     "  -o, --output DIR     put the rips in DIR\n"
-    "  --list               list the songs, then stop\n"
+    "  --list               list the songs of each set, then stop\n"
     "  --only REGEX         rip only the songs whose name, such as \"Song 12\", or title matches\n"
     "  --no-length          skip the length analysis and omit length and fade tags\n"
     "  --no-trim            keep the whole image in the library\n"
@@ -114,7 +118,6 @@ struct Job
     std::string label;
     std::optional<xsflib::rip::Timing> timing;
     std::optional<long long> last_sound_ms;
-    gsf::rip::Coverage coverage;
 };
 
 // The song's title from the game's tags, or "Song N".
@@ -258,23 +261,16 @@ int WriteSet(const gsf::rip::SetImage& set, const std::vector<Job>& jobs, const 
     return 0;
 }
 
-// Trims the set to the bytes that the songs' runs read. The model runs no timed DMA. A trim that leaves out a byte of a
-// timed DMA's first transfer from the cartridge fails: the set then plays wrongly for certain. What such a DMA reads
-// after that depends on the order of the console's interrupts, which the trim can't see, so a rip warns of it, unless
-// the driver keeps those bytes. Returns 1 if the trim fails, or 0.
-int TrimSet(const std::string& input, const gsf::rip::Driver& driver, std::vector<Job>& jobs, gsf::rip::SetImage& set)
+// Trims the set to the bytes that the songs' runs read: `coverage`, the union of their runs. The model runs no timed
+// DMA. A trim that leaves out a byte of a timed DMA's first transfer from the cartridge fails: the set then plays
+// wrongly for certain. What such a DMA reads after that depends on the order of the console's interrupts, which the
+// trim can't see, so a rip warns of it, unless the driver keeps those bytes. Returns 1 if the trim fails, or 0.
+int TrimSet(const std::string& input, const gsf::rip::Driver& driver, gsf::rip::Coverage& coverage,
+            gsf::rip::SetImage& set)
 {
-    std::vector<uint8_t> reads;
-    std::set<gsf::rip::TimedDma> dmas;
-    uint64_t dma_starts = 0;
-    for (Job& job : jobs)
-    {
-        gsf::rip::AddReads(reads, job.coverage.reads);
-        dmas.insert(job.coverage.dmas.begin(), job.coverage.dmas.end());
-        dma_starts += job.coverage.dma_starts;
-        job.coverage = {};
-    }
-
+    std::vector<uint8_t>& reads = coverage.reads;
+    const std::set<gsf::rip::TimedDma>& dmas = coverage.dmas;
+    const uint64_t dma_starts = coverage.dma_starts;
     driver.CompleteReads(reads);
     if (auto problem = gsf::rip::CheckStubRoom(set, reads))
     {
@@ -306,57 +302,34 @@ int TrimSet(const std::string& input, const gsf::rip::Driver& driver, std::vecto
     return 0;
 }
 
-int RipInput(const std::string& input, const Options& o, xsflib::cli::FileNameRegistries& names)
+// Rips `jobs`, songs of `driver`, into a set in `out_dir`. Returns 1 if the rip fails, or 0.
+int RipSet(const std::string& input, const agblib::agb::Rom& rom, const gsf::rip::Driver& driver, std::vector<Job> jobs,
+           const Options& o, const fs::path& out_dir, xsflib::cli::FileNameRegistries& names)
 {
-    agblib::agb::Rom rom;
     std::string error;
-    if (!rom.Load(xsflib::Utf8(fs::absolute(xsflib::PathFromUtf8(input))), error))
-    {
-        std::fprintf(stderr, "error: %s: %s\n", input.c_str(), error.c_str());
-        return 1;
-    }
-
-    if (rom.FromGsf())
-    {
-        std::fprintf(stderr, "error: %s: a GSF set, not a cartridge image\n", input.c_str());
-        return 1;
-    }
-
-    const std::unique_ptr<gsf::rip::Driver> driver = gsf::rip::FindDriver(rom, error);
-    if (!driver)
-    {
-        std::fprintf(stderr, "error: %s: %s\n", input.c_str(), error.c_str());
-        return 1;
-    }
-
-    std::fprintf(stderr, "%s: %s, %d songs\n", input.c_str(), driver->Name().c_str(), driver->SongCount());
-    if (o.list)
-    {
-        ListSongs(*driver);
-        return 0;
-    }
-
-    std::vector<Job> jobs = SongJobs(*driver, o);
-    if (jobs.empty())
-    {
-        std::fprintf(stderr, "error: %s: no song to rip\n", input.c_str());
-        return 1;
-    }
-
-    // Each song's length, then its run on the model for the coverage.
-    const gsf::rip::StubPlan plan = driver->Plan();
+    // Each song's length, then its run on the model for the coverage. Each run's map of the cartridge goes into the
+    // union when the run ends: a map for each song would take songs times the image's size. A stub inside the image
+    // needs the coverage without the trim too, for the check that the music reads none of the bytes it replaces.
+    const gsf::rip::StubPlan plan = driver.Plan();
+    const bool cover = o.trim || gsf::rip::StubInImage(rom.Size(), plan);
+    gsf::rip::Coverage coverage;
+    std::mutex coverage_mutex;
     const auto analyze = [&](Job& job)
     {
         if (o.lengths)
         {
-            job.timing = driver->SongTiming(int(job.song));
-            job.last_sound_ms = driver->LastSoundMs(int(job.song));
+            job.timing = driver.SongTiming(int(job.song));
+            job.last_sound_ms = driver.LastSoundMs(int(job.song));
         }
 
-        if (o.trim && !(job.timing && job.timing->silent))
+        if (cover && !(job.timing && job.timing->silent))
         {
-            job.coverage =
-                gsf::rip::CoverSong(rom, *driver, plan, job.song, gsf::rip::CoverageFrames(job.timing, o.margin));
+            const gsf::rip::Coverage run =
+                gsf::rip::CoverSong(rom, driver, plan, job.song, gsf::rip::CoverageFrames(job.timing, o.margin));
+            const std::lock_guard lock(coverage_mutex);
+            gsf::rip::AddReads(coverage.reads, run.reads);
+            coverage.dmas.insert(run.dmas.begin(), run.dmas.end());
+            coverage.dma_starts += run.dma_starts;
         }
 
         return o.lengths;
@@ -391,16 +364,26 @@ int RipInput(const std::string& input, const Options& o, xsflib::cli::FileNameRe
         return 1;
     }
 
-    if (o.trim && TrimSet(input, *driver, jobs, *set) != 0)
+    if (o.trim && TrimSet(input, driver, coverage, *set) != 0)
     {
         return 1;
+    }
+
+    if (!o.trim && cover)
+    {
+        driver.CompleteReads(coverage.reads);
+        if (auto problem = gsf::rip::CheckStubRoom(*set, coverage.reads))
+        {
+            std::fprintf(stderr, "error: %s: %s\n", input.c_str(), problem->c_str());
+            return 1;
+        }
     }
 
     // The options' tags, or the game's where an option is empty.
     Options tagged = o;
     std::string comment;
     std::vector<gsf::rip::SongCredit> credits;
-    if (const gsf::rip::GameTags* tags = driver->Tags())
+    if (const gsf::rip::GameTags* tags = driver.Tags())
     {
         // --artist replaces the songs' artists too. An empty artist keeps the common one, and the comments stay.
         credits = tags->credits;
@@ -446,7 +429,6 @@ int RipInput(const std::string& input, const Options& o, xsflib::cli::FileNameRe
 
     const std::string code = gsf::rip::ProductCode(rom.GameCode());
     const std::string base = code.empty() ? game : code;
-    const fs::path out_dir = o.out_dir.empty() ? xsflib::rip::DefaultOutputDir(input, "_gsf") : fs::path(o.out_dir);
     std::error_code fs_error;
     fs::create_directories(out_dir, fs_error);
     if (fs_error)
@@ -462,6 +444,83 @@ int RipInput(const std::string& input, const Options& o, xsflib::cli::FileNameRe
 
     xsflib::rip::ReportOutput(out_dir);
     return 0;
+}
+
+int RipInput(const std::string& input, const Options& o, xsflib::cli::FileNameRegistries& names)
+{
+    agblib::agb::Rom rom;
+    std::string error;
+    if (!rom.Load(xsflib::Utf8(fs::absolute(xsflib::PathFromUtf8(input))), error))
+    {
+        std::fprintf(stderr, "error: %s: %s\n", input.c_str(), error.c_str());
+        return 1;
+    }
+
+    if (rom.FromGsf())
+    {
+        std::fprintf(stderr, "error: %s: a GSF set, not a cartridge image\n", input.c_str());
+        return 1;
+    }
+
+    const std::vector<gsf::rip::FoundDriver> drivers = gsf::rip::FindDrivers(rom, error);
+    if (drivers.empty())
+    {
+        std::fprintf(stderr, "error: %s: %s\n", input.c_str(), error.c_str());
+        return 1;
+    }
+
+    // A game with more than one set gets a folder for each, named after the set.
+    std::vector<std::vector<Job>> jobs;
+    bool any = false;
+    for (const gsf::rip::FoundDriver& found : drivers)
+    {
+        const gsf::rip::Driver& driver = *found.driver;
+        const std::string set = found.set.empty() ? std::string() : " (" + found.set + ")";
+        std::fprintf(stderr, "%s%s: %s, %d songs\n", input.c_str(), set.c_str(), driver.Name().c_str(),
+                     driver.SongCount());
+        if (o.list)
+        {
+            if (!found.set.empty())
+            {
+                std::printf("set: %s\n", found.set.c_str());
+            }
+            ListSongs(driver);
+            continue;
+        }
+
+        jobs.push_back(SongJobs(driver, o));
+        any = any || !jobs.back().empty();
+    }
+
+    if (o.list)
+    {
+        return 0;
+    }
+
+    if (!any)
+    {
+        std::fprintf(stderr, "error: %s: no song to rip\n", input.c_str());
+        return 1;
+    }
+
+    const fs::path out_dir = o.out_dir.empty() ? xsflib::rip::DefaultOutputDir(input, "_gsf") : fs::path(o.out_dir);
+    int result = 0;
+    for (size_t i = 0; i < drivers.size(); i++)
+    {
+        if (jobs[i].empty())
+        {
+            continue;
+        }
+
+        const std::string& set = drivers[i].set;
+        const fs::path dir = set.empty() ? out_dir : out_dir / xsflib::PathFromUtf8(gsf::rip::FileTitle(set));
+        if (RipSet(input, rom, *drivers[i].driver, std::move(jobs[i]), o, dir, names) != 0)
+        {
+            result = 1;
+        }
+    }
+
+    return result;
 }
 
 } // namespace

@@ -11,10 +11,10 @@
 
 #include "agblib/agb/rom.h"
 #include "agblib/agb/system.h"
+#include "ntdlib/arm/assembler.h"
 #include "ntdlib/arm/cpu.h"
 #include "xsflib/testing/check.h"
 
-#include "rip/arm.h"
 #include "rip/model.h"
 
 namespace
@@ -58,12 +58,12 @@ void Place(std::vector<uint8_t>& image, uint32_t address, const std::vector<uint
 
 std::vector<uint8_t> Counter(uint32_t address, uint32_t word)
 {
-    gsf::rip::ArmAssembler a(address);
+    ntdlib::arm::ArmAssembler a(address);
     a.LoadConstant(12, word);
     a.Ldr(1, 12);
     a.Add(1, 1, 1);
     a.Str(1, 12);
-    a.Bx(gsf::rip::kLr);
+    a.Bx(ntdlib::arm::kLr);
     return a.Finish();
 }
 
@@ -71,11 +71,11 @@ std::vector<uint8_t> TestImage()
 {
     std::vector<uint8_t> image(kImageSize);
 
-    gsf::rip::ArmAssembler record(kRecord);
+    ntdlib::arm::ArmAssembler record(kRecord);
     record.LoadConstant(12, kRecorded);
     record.Str(0, 12);
     record.Str(1, 12, 4);
-    record.Bx(gsf::rip::kLr);
+    record.Bx(ntdlib::arm::kLr);
     Place(image, kRecord, record.Finish());
 
     Place(image, kCountVblank, Counter(kCountVblank, kVblanks));
@@ -163,7 +163,7 @@ void TestStart()
     XSFLIB_CHECK(system.Load(0x04000208, 2) == 1);
     XSFLIB_CHECK(system.Load(0x04000088, 2) == 0x0200);
     XSFLIB_CHECK((cpu.Cpsr() & 0xFF) == 0x1F);
-    XSFLIB_CHECK(cpu.Reg(gsf::rip::kSp) == gsf::rip::kSystemStack);
+    XSFLIB_CHECK(cpu.Reg(ntdlib::arm::kSp) == gsf::rip::kSystemStack);
 }
 
 void TestInterruptsAndLoop()
@@ -187,7 +187,7 @@ void TestInterruptsAndLoop()
     XSFLIB_CHECK(system.Load(0x04000202, 2) == 0x0011);
     XSFLIB_CHECK(system.Load(gsf::rip::kBiosIrqFlags, 2) == 0x0011);
     XSFLIB_CHECK((cpu.Cpsr() & 0xFF) == 0xD2);
-    XSFLIB_CHECK(cpu.Reg(gsf::rip::kSp) == gsf::rip::kIrqStack);
+    XSFLIB_CHECK(cpu.Reg(ntdlib::arm::kSp) == gsf::rip::kIrqStack);
 
     // The main loop waits with VBlankIntrWait, then runs the frame's operations.
     std::vector<uint32_t> calls;

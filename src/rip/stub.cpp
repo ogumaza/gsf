@@ -7,10 +7,21 @@
 #include <utility>
 #include <vector>
 
-#include "rip/arm.h"
+#include "ntdlib/arm/assembler.h"
 
 namespace gsf::rip
 {
+
+using ntdlib::arm::ArmAssembler;
+using ntdlib::arm::Condition;
+using ntdlib::arm::kFiqsOff;
+using ntdlib::arm::kIrqsOff;
+using ntdlib::arm::kLr;
+using ntdlib::arm::kModeIrq;
+using ntdlib::arm::kModeSupervisor;
+using ntdlib::arm::kModeSystem;
+using ntdlib::arm::kSp;
+
 namespace
 {
 

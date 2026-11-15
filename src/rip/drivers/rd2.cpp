@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Nintendo R&D2's driver, as Super Mario Advance 2, 3 and 4 play it.
+// Nintendo R&D2's driver, as Super Mario Advance 2, 3 and 4 and A Link to the Past play it.
 // agblib's detection finds the sequences and the settings that the game's play-music routine gives each of them. A
 // profile for each game gives the routines that the game calls: its sound init, the driver's request and the call that
 // hands the requests to the next frame, the driver's VBlank routine and its per-frame routine, and the game's
@@ -50,12 +50,15 @@ struct Profile
     uint32_t yoshi_mute = 0;
 };
 
-// A Link to the Past (AZLE) is left out. The game doesn't set its R&D2 driver up within five minutes of booting without
-// input, so the calls that the game makes to it are unknown.
+// A Link to the Past (AZLE) sets its R&D2 driver up only once the player has chosen a file and the game. In mGBA, the
+// game then calls its sound init (0x08129E60) and its play-music routine (0x0812A044). The routine looks the music
+// number up in a table of sequences (0x08198C50), requests the sequence on music player 0x12 and records the music. It
+// sets no voices, volume or muted tracks, so the stub makes the request itself for every sequence.
 constexpr Profile kProfiles[] = {
     {"AA2E", 0x0809B258, 0x0809D840, 0x0809D82C, 0x0809BA74, 0x0809BA80, 0x13, 0x0809B348, 0x0809B3CC},
     {"A3AE", 0x0812C214, 0x0812EEBC, 0x0812EEA8, 0x0812CF50, 0x0812CF5C, 0x13, 0x0812C3B4},
     {"AX4E", 0x080E4414, 0x080E6D94, 0x080E6D80, 0x080E4DDC, 0x080E4DE8, 0x13, 0x080E4598},
+    {"AZLE", 0x08129E60, 0x0812C718, 0x0812C704, 0x0812A798, 0x0812A7A4, 0x12},
 };
 
 class Rd2Driver : public Driver

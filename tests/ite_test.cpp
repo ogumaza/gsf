@@ -287,6 +287,21 @@ void TestOtherRelease()
     XSFLIB_CHECK(error.find("no profile") != std::string::npos);
 }
 
+void TestFindDrivers()
+{
+    // A game with one driver has one set, with no name, in the rip's folder.
+    std::string error;
+    const agblib::agb::Rom rom = MakeRom("AHJE", kSongs);
+    const std::vector<gsf::rip::FoundDriver> drivers = gsf::rip::FindDrivers(rom, error);
+    XSFLIB_REQUIRE(drivers.size() == 1);
+    XSFLIB_CHECK(drivers[0].driver->Name() == "ITE Media's driver" && drivers[0].set.empty());
+
+    // A game that the table of games with a driver for each part names has each of those drivers, or none.
+    const agblib::agb::Rom parts = MakeRom("AZLE", kSongs);
+    XSFLIB_CHECK(gsf::rip::FindDrivers(parts, error).empty());
+    XSFLIB_CHECK(error.find("A Link to the Past") != std::string::npos);
+}
+
 } // namespace
 
 int main()
@@ -295,6 +310,7 @@ int main()
     TestTiming();
     TestTags();
     TestOtherRelease();
+    TestFindDrivers();
 
     return xsflib::testing::Summary("ite");
 }

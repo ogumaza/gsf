@@ -103,6 +103,7 @@ const GameTags kHugoTags = {
     .artist = "David Filskov, Thomas Bendt",
     .year = "2002-09-17",
     .copyright = "ITE Media, Namco",
+    .comment = {},
     .titles = {"Main Menu, High Score, Credits",
                "Beaver Fort",
                "Squirrel Tree",
@@ -132,6 +133,7 @@ const GameTags kHugoTags = {
                "Viking Camp Clear",
                "Game Over"},
     .order = {0, 7, 10, 1, 13, 22, 24, 17, 18, 19, 23, 14, 8, 11, 2, 25, 20, 15, 9, 12, 3, 26, 21, 16, 27, 5},
+    .credits = {},
 };
 
 // The music's volume that the game's routine at 0x08010668 sets for each song (jump table at 0x080106C4).

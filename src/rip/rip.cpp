@@ -25,24 +25,52 @@ namespace gsf::rip
 namespace
 {
 
-// Where the stub goes in an image that fills the 32 MiB: the last 4-aligned run of padding, bytes of the image's last
-// value, that holds it. Returns nothing when the run is too short.
+// Where the stub goes in an image that fills the 32 MiB: in the run of the image's last byte value at its end, or else
+// in the longest run of 0x00 or 0xFF after the header, the last of equal runs. Such a run is the least likely to be
+// data that the game reads. The stub starts at the run's first multiple of 4. Returns nothing when the run is too
+// short for the stub.
 std::optional<uint32_t> PaddingRoom(const std::vector<uint8_t>& rom, uint32_t size)
 {
-    const uint8_t pad = rom.back();
-    size_t start = rom.size();
-    while (start > kHeaderSize && rom[start - 1] == pad)
+    const auto room = [size](size_t start, size_t end) -> std::optional<uint32_t>
     {
-        start--;
+        const size_t aligned = (start + 3) & ~size_t{3};
+        if (aligned + size > end)
+        {
+            return std::nullopt;
+        }
+
+        return uint32_t(aligned);
+    };
+
+    size_t end = rom.size();
+    size_t longest_start = 0;
+    size_t longest_end = 0;
+    while (end > kHeaderSize)
+    {
+        const uint8_t value = rom[end - 1];
+        size_t start = end;
+        while (start > kHeaderSize && rom[start - 1] == value)
+        {
+            start--;
+        }
+
+        if (end == rom.size())
+        {
+            if (auto offset = room(start, end))
+            {
+                return offset;
+            }
+        }
+        else if ((value == 0x00 || value == 0xFF) && end - start > longest_end - longest_start)
+        {
+            longest_start = start;
+            longest_end = end;
+        }
+
+        end = start;
     }
 
-    const size_t aligned = (start + 3) & ~size_t{3};
-    if (aligned + size > rom.size())
-    {
-        return std::nullopt;
-    }
-
-    return uint32_t(aligned);
+    return room(longest_start, longest_end);
 }
 
 // Whether the trim keeps the byte at `offset` of the image: the header, the stub and the bytes that a run read.
@@ -70,7 +98,7 @@ std::optional<SetImage> PlaceStub(const std::vector<uint8_t>& rom, const StubPla
     const size_t end = (rom.size() + 3) & ~size_t{3};
     std::optional<uint32_t> offset;
     size_t room_end = kMaxImageSize;
-    if (end + size <= kMaxImageSize)
+    if (!StubInImage(rom.size(), plan))
     {
         offset = uint32_t(end);
     }
@@ -99,6 +127,11 @@ std::optional<SetImage> PlaceStub(const std::vector<uint8_t>& rom, const StubPla
     xsflib::StoreLe32(set.image.data(), BranchWord(kRomBase, set.stub.address));
 
     return set;
+}
+
+bool StubInImage(size_t size, const StubPlan& plan)
+{
+    return ((size + 3) & ~size_t{3}) + StubSize(plan) > kMaxImageSize;
 }
 
 uint64_t CoverageFrames(const std::optional<xsflib::rip::Timing>& timing, double margin_seconds)

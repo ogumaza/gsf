@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <set>
@@ -31,10 +32,15 @@ struct SetImage
     Stub stub;
 };
 
-// Puts the stub for `plan` after the end of `rom`, or in the padding at its end when the image fills the 32 MiB. The
-// library starts song `first_song`. Returns nothing and sets `error` when there's no room.
+// Puts the stub for `plan` after the end of `rom`, or in its padding when the image fills the 32 MiB: the run of the
+// image's last byte value at its end, or else its longest run of 0x00 or 0xFF. The library starts song `first_song`.
+// Returns nothing and sets `error` when there's no room.
 std::optional<SetImage> PlaceStub(const std::vector<uint8_t>& rom, const StubPlan& plan, uint32_t first_song,
                                   std::string& error);
+
+// Whether PlaceStub() puts the stub for `plan` inside an image of `size` bytes: in its padding, when no room is left
+// after it in the 32 MiB. The stub then replaces bytes of the image, and a rip has to check that the music reads none.
+bool StubInImage(size_t size, const StubPlan& plan);
 
 // The frames that a song's coverage run plays: its length and fade, half its length more for a song that loops, and
 // `margin_seconds`. A song without a timing plays kUntimedSeconds.

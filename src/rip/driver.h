@@ -106,9 +106,23 @@ void MarkCodeSpan(std::vector<uint8_t>& reads, std::initializer_list<uint32_t> r
 // game has none of the drivers that gsf rips, or when the driver's tables or routines can't be read.
 std::unique_ptr<Driver> FindDriver(const agblib::agb::Rom& rom, std::string& error);
 
+// A driver that FindDrivers() found, and its set's name when the image has more than one set: the name of the set's
+// folder.
+struct FoundDriver
+{
+    std::unique_ptr<Driver> driver;
+    std::string set;
+};
+
+// Finds the sound drivers of the game in `rom`. `rom` has to outlive the result. The result is FindDriver()'s driver,
+// or each driver of a game in the table of games with a driver for each part. Returns none and sets `error` as
+// FindDriver() does, or when a driver of such a game can't be read.
+std::vector<FoundDriver> FindDrivers(const agblib::agb::Rom& rom, std::string& error);
+
 // Each driver's part of FindDriver. It returns null and leaves `error` empty when the game shows no sign of the
 // driver.
 std::unique_ptr<Driver> FindAlphaDream(const agblib::agb::Rom& rom, std::string& error);
+std::unique_ptr<Driver> FindBrownie(const agblib::agb::Rom& rom, std::string& error);
 std::unique_ptr<Driver> FindLogikState(const agblib::agb::Rom& rom, std::string& error);
 std::unique_ptr<Driver> FindRd1(const agblib::agb::Rom& rom, std::string& error);
 std::unique_ptr<Driver> FindQuintet(const agblib::agb::Rom& rom, std::string& error);

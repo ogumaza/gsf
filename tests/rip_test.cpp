@@ -55,6 +55,7 @@ void TestPlaceStubAfterImage()
     XSFLIB_REQUIRE(set.has_value());
     XSFLIB_CHECK(set->stub.address == kRomBase + 0x1004);
     XSFLIB_CHECK(set->image.size() == 0x1004 + set->stub.code.size());
+    XSFLIB_CHECK(!gsf::rip::StubInImage(rom.size(), SmallPlan()));
     XSFLIB_CHECK(set->image[0x1000] == 0x55 && set->image[0x1001] == 0 && set->image[4] == 0x55);
     XSFLIB_CHECK(xsflib::LoadLe32(set->image.data()) == gsf::rip::BranchWord(kRomBase, kRomBase + 0x1004));
     XSFLIB_CHECK(xsflib::LoadLe32(&set->image[set->stub.song_address - kRomBase]) == 2);
@@ -62,7 +63,7 @@ void TestPlaceStubAfterImage()
 
 void TestPlaceStubInPadding()
 {
-    // A full 32 MiB image puts the stub in its padding. One with too little padding has no room.
+    // A full 32 MiB image puts the stub in the padding at its end. One with too little padding has no room.
     std::vector<uint8_t> rom(gsf::kMaxImageSize, 0xFF);
     for (size_t i = 0; i < 0x1FFF001; i++)
     {
@@ -77,15 +78,31 @@ void TestPlaceStubInPadding()
     shared.start.push_back(Operation::Call(0x08000201, {{kRomBase + 0x1FFF004}, {kRomBase + 0x1FFF008}}));
     const std::optional<SetImage> placed = gsf::rip::PlaceStub(rom, shared, 0, error);
 
-    rom[0x1FFFFF0] = 0x11;
-    const std::optional<SetImage> none = gsf::rip::PlaceStub(rom, SmallPlan(), 0, error);
+    // An image that ends in data puts the stub in its longest run of 0x00 or 0xFF. A longer run of another value isn't
+    // padding.
+    std::vector<uint8_t> data(gsf::kMaxImageSize, 0x11);
+    std::fill(data.begin() + 0x100001, data.begin() + 0x101000, 0x00);
+    std::fill(data.begin() + 0x1000000, data.begin() + 0x1100000, 0x22);
+    std::fill(data.begin() + 0x1800000, data.begin() + 0x1800800, 0xFF);
+    std::fill(data.end() - 3, data.end(), 0xFF);
+    const std::optional<SetImage> inside = gsf::rip::PlaceStub(data, SmallPlan(), 0, error);
+
+    // The longest run is too short for the stub.
+    std::fill(data.begin() + 0x100001, data.begin() + 0x101000, 0x11);
+    std::fill(data.begin() + 0x1800000, data.begin() + 0x1800800, 0x11);
+    std::fill(data.begin() + 0x1800000, data.begin() + 0x1800020, 0xFF);
+    const std::optional<SetImage> none = gsf::rip::PlaceStub(data, SmallPlan(), 0, error);
 
     XSFLIB_REQUIRE(set.has_value());
     XSFLIB_CHECK(set->stub.address == kRomBase + 0x1FFF004);
+    XSFLIB_CHECK(gsf::rip::StubInImage(rom.size(), SmallPlan()));
     XSFLIB_CHECK(set->image.size() == gsf::kMaxImageSize);
     XSFLIB_CHECK(set->stub.code.size() == gsf::rip::StubSize(SmallPlan()));
     XSFLIB_REQUIRE(placed.has_value());
     XSFLIB_CHECK(placed->stub.code.size() == gsf::rip::StubSize(shared));
+    XSFLIB_REQUIRE(inside.has_value());
+    XSFLIB_CHECK(inside->stub.address == kRomBase + 0x100004);
+    XSFLIB_CHECK(inside->image.size() == gsf::kMaxImageSize && inside->image[0x1FFFFFF] == 0xFF);
     XSFLIB_CHECK(!none && error.find("no room") != std::string::npos);
 }
 

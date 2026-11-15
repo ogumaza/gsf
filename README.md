@@ -13,6 +13,8 @@ players built on mGBA play the sets.
 
 - AlphaDream's driver: Mario & Luigi: Superstar Saga and two Hamtaro games (Tottoko Hamtaro 4: Nijiiro Daikoushin
   Dechu and Tottoko Hamtaro: Hamu-Hamu Sports)
+- Brownie Brown's driver: Sword of Mana, the US release, and Magical Vacation. Each sound that uses the music's
+  channels is a song. The sound effects aren't ripped.
 - ITE Media's driver: Hugo: The Evil Mirror, the US release. Each song of the game's bank is a song, and it plays at
   the music volume that the game sets for it. A song that ends plays out to its last sound. In the game, the
   interrupted music comes back after a jingle's last row and cuts the jingle short. The audio of the game's videos
@@ -26,7 +28,8 @@ players built on mGBA play the sets.
 - Nintendo R&D1's driver: WarioWare, Inc.: Mega Microgame$! and Rhythm Tengoku. Each entry of the song table that
   holds a song is a song, sound effects included. A song plays as the song table starts it. The games' stages can play
   it at another tempo, pitch or volume, or with some tracks silent, and the sets don't follow them.
-- Nintendo R&D2's driver: Super Mario Advance 2, 3 and 4, the US releases. Each sequence of the music is a song. A
+- Nintendo R&D2's driver: Super Mario Advance 2, 3 and 4 and The Legend of Zelda: A Link to the Past & Four Swords,
+  the US releases. Each sequence of the music is a song. A
   sequence that the game plays by a music number plays as the first such number sets it up: with its voices, its
   volume and its muted tracks. In Super Mario Advance 2, the tracks that play only while Mario rides Yoshi stay silent.
 - Quintet's driver: Super Robot Taisen A, D, R and J; Bouken Yuuki Plaston GP, Bouken Yuuki Densetsu Plaston Gate and
@@ -34,8 +37,13 @@ players built on mGBA play the sets.
   Shima no Chobi Gurumi; Gachasute! Dyna Device Red and Blue; Robopon 2: Ring Version and Cross Version; and Magical
   Fengshen. The songs of each music file are songs, numbered one file after another. The sound effects aren't ripped.
 - MP2K, the sound driver of Nintendo's SDK, which most GBA games use. Each entry of the song table is a song, and it
-  plays as the driver starts it. gsf doesn't rip games that set a song up in their code before they start it, or games
-  with Camelot's version of the driver, such as Golden Sun: The Lost Age. `gsfrip` names the reason.
+  plays as the driver starts it. Where a game's code sets a song up before it starts it, with another number of
+  channels, a reverb or a volume, the set does the same. Golden Sun: The Lost Age has Camelot's version of the driver
+  and plays each song through Camelot's sound module, as the game does. gsf doesn't rip the other games with Camelot's
+  version, such as Mario Tennis: Power Tour. `gsfrip` names the reason.
+
+The Legend of Zelda: A Link to the Past & Four Swords has two drivers: Nintendo R&D2's plays A Link to the Past, and
+MP2K plays the menus and Four Swords. `gsfrip` rips a set for each.
 
 A game with another driver gets "no sound driver that gsf rips found".
 
@@ -55,11 +63,16 @@ instead. The set is:
   for, such as Aero the Acro-Bat, in the order in which a player first hears them.
 - `!playlist.m3u`, which lists the minis in order
 
-The stub takes the place of the game's start-up code. The cartridge's first word branches to it, after the end of the
-game's image. It sets up the stacks and an interrupt handler, makes the calls that the game's start-up code makes to set
-up the sound driver, and starts the song whose number the mini stores. It then runs the driver as the game does: the
-routines that the game's interrupt handler calls, and those that its main loop calls after each vertical blank. Each
-mini holds the song's number, a word at a fixed address in the stub.
+A game with a driver for each part, such as A Link to the Past & Four Swords, gets a folder for each part's set inside
+that folder, named after the part: `A Link to the Past` and `Four Swords`. Each holds a set as above, with a library
+of its own.
+
+The stub takes the place of the game's start-up code. The cartridge's first word branches to it. It goes after the end
+of the game's image. In an image that fills the cartridge's 32 MiB, it goes in the padding at the end, or else in the
+image's longest run of zeros or of 0xFF bytes. It sets up the stacks and an interrupt handler, makes the calls that the
+game's start-up code makes to set up the sound driver, and starts the song whose number the mini stores. It then runs
+the driver as the game does: the routines that the game's interrupt handler calls, and those that its main loop calls
+after each vertical blank. Each mini holds the song's number, a word at a fixed address in the stub.
 
 Each song then plays on a model of the console that runs the game's sound driver:
 
@@ -72,7 +85,8 @@ Each song then plays on a model of the console that runs the game's sound driver
   zeros, which compress to almost nothing. With Nintendo R&D1's driver, the library also keeps the whole of each sample
   that a song read part of, and all of the driver's code. With Quintet's driver, whose sound DMA reads each sample
   from the cartridge, the library keeps the whole of each sample that a song starts. With MP2K, the library keeps all
-  of the driver's code.
+  of the driver's code. With Brownie Brown's driver, the library keeps the whole of each sample that a song read part
+  of, and all of the driver's code.
 
 The model runs no interrupts, timers or sound DMA between the driver's calls, and its PSG channels never stop on
 their own. On the console, those can come in another order and make the driver read bytes that the model's runs
@@ -100,8 +114,8 @@ length, with a fade of 1 s. The options below replace any of the tags.
 Options:
 
 - `-o DIR`, `--output DIR`: write the set to DIR
-- `--list`: list the songs
-- `--only REGEX`: rip only the songs whose names or titles match, such as `"^Song 12$"`
+- `--list`: list the songs of each set
+- `--only REGEX`: rip only the songs whose names or titles match, such as `"^Song 12$"`, in each set
 - `--no-length`: skip the length analysis
 - `--no-trim`: keep the whole image in the library
 - `--margin S`: the seconds of play after the fade that the coverage still covers (default 10)
@@ -115,10 +129,9 @@ Options:
 
 You need Git, CMake 3.20 or later, and C and C++20 compilers. gsf builds on four libraries, which the repository
 includes as submodules in `externals/`: xsflib for the PSF container and the frame of the rip tool, agblib for the Game
-Boy Advance's code and the sound drivers, ntdlib for the ARM interpreter that agblib uses, and seqlib, which agblib's
-work on songs requires. Clone with
-`git clone --recursive`, or run `git submodule update --init` in a clone. zlib is downloaded and built along with gsf
-when it isn't installed.
+Boy Advance's code and the sound drivers, ntdlib for the ARM interpreter that agblib uses and the ARM assembler that
+writes the stub, and seqlib, which agblib's work on songs requires. Clone with `git clone --recursive`, or run
+`git submodule update --init` in a clone. zlib is downloaded and built along with gsf when it isn't installed.
 
 - **Windows:** Visual Studio 2022 or later with the "Desktop development with C++" workload and its "C++ Clang tools for
   Windows" component. The workload includes CMake. The component adds clang-cl. Configure with
@@ -154,7 +167,7 @@ select clang-cl. On Windows, use the commands above.
 
 ```
 src/gsf/             GSF's files and the loading of a set
-src/rip/             the ripper: the ARM assembler, the stub, the model's runs and the drivers
+src/rip/             the ripper: the stub, the model's runs and the drivers
 src/tools/           gsfrip
 externals/           xsflib, agblib, ntdlib and seqlib
 tests/               the CTest suites
