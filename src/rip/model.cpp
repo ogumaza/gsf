@@ -25,9 +25,6 @@ constexpr uint16_t kDmaRepeat = 0x0200;
 constexpr uint16_t kDmaWords = 0x0400;
 constexpr int kDmaTimingShift = 12;
 constexpr uint16_t kDmaTimingSpecial = 3; // the sound FIFOs' requests on DMAs 1 and 2
-constexpr int kDmaSourceStepShift = 7;
-constexpr uint16_t kStepDown = 1;
-constexpr uint16_t kStepFixed = 2;
 constexpr int kSoundDmaLast = 2;
 constexpr uint32_t kFifoTransfer = 16; // four words for each request of a sound FIFO
 constexpr int kDma3 = 3;
@@ -46,27 +43,16 @@ uint32_t DmaRegister(int channel, uint32_t offset)
 
 DmaBytes FirstTransfer(const TimedDma& dma)
 {
-    // A sound FIFO's DMA moves words whatever the control gives, and ignores the count.
+    // A sound FIFO's DMA moves words whatever the control gives, and ignores the count (GBATEK, "Sound DMA"). A source
+    // in the cartridge counts up by the unit whatever the control's source step gives, as mGBA's DMA does: the bytes
+    // run up from the source.
     const uint16_t timing = (dma.control >> kDmaTimingShift) & 3;
     const bool fifo = timing == kDmaTimingSpecial && dma.channel >= kFirstRomDma && dma.channel <= kSoundDmaLast;
     const uint32_t unit = fifo || dma.control & kDmaWords ? 4 : 2;
     const uint32_t most = dma.channel == kDma3 ? kDma3MaxCount : kMaxCount;
     const uint32_t count = dma.count % most == 0 ? most : dma.count % most;
     const uint32_t size = fifo ? kFifoTransfer : count * unit;
-
     const uint32_t offset = (dma.source & ~(unit - 1)) & (agblib::agb::kMaxRomSize - 1);
-    const uint16_t step = (dma.control >> kDmaSourceStepShift) & 3;
-    if (step == kStepFixed)
-    {
-        return {offset, unit};
-    }
-
-    if (step == kStepDown)
-    {
-        const uint32_t below = std::min(offset, size - unit);
-        return {offset - below, below + unit};
-    }
-
     return {offset, size};
 }
 

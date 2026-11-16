@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -58,7 +59,44 @@ void TestPlaceStubAfterImage()
     XSFLIB_CHECK(!gsf::rip::StubInImage(rom.size(), SmallPlan()));
     XSFLIB_CHECK(set->image[0x1000] == 0x55 && set->image[0x1001] == 0 && set->image[4] == 0x55);
     XSFLIB_CHECK(xsflib::LoadLe32(set->image.data()) == gsf::rip::BranchWord(kRomBase, kRomBase + 0x1004));
-    XSFLIB_CHECK(xsflib::LoadLe32(&set->image[set->stub.song_address - kRomBase]) == 2);
+
+    // The first song goes in the header's reserved bytes at 0xBE. The bytes around them stay the game's.
+    XSFLIB_CHECK(xsflib::LoadLe16(&set->image[gsf::rip::kSongAddress - kRomBase]) == 2);
+    XSFLIB_CHECK(set->image[0xBD] == 0x55 && set->image[0xC0] == 0x55);
+
+    // A song above 16 bits doesn't fit.
+    XSFLIB_CHECK(!gsf::rip::PlaceStub(rom, SmallPlan(), 0x10000, error) && error.find("65535") != std::string::npos);
+}
+
+void TestMiniOfLargeImage()
+{
+    // An image of 16 MiB puts the stub at 0x09000000. The mini's address still starts with the high byte of its start,
+    // 0x08, as the GSF description asks.
+    const std::vector<uint8_t> rom(0x01000000, 0x66);
+    std::string error;
+    const std::optional<SetImage> set = gsf::rip::PlaceStub(rom, SmallPlan(), 7, error);
+    XSFLIB_REQUIRE(set.has_value());
+    XSFLIB_CHECK(set->stub.address == 0x09000000);
+    XSFLIB_CHECK(xsflib::LoadLe16(&set->image[0xBE]) == 7);
+
+    xsflib::psf::PsfFile psf;
+    XSFLIB_REQUIRE(!xsflib::psf::ParsePsf(gsf::rip::MiniFile(7, "game.gsflib", {}), psf));
+    gsf::Section section;
+    XSFLIB_REQUIRE(!gsf::ParseSection(psf.program, section));
+    XSFLIB_CHECK(section.address >> 24 == section.entry >> 24);
+    XSFLIB_CHECK(section.address == 0x080000BE);
+
+    // A mini can't store a song above 16 bits.
+    bool threw = false;
+    try
+    {
+        gsf::rip::MiniFile(0x10000, "game.gsflib", {});
+    }
+    catch (const std::logic_error&)
+    {
+        threw = true;
+    }
+    XSFLIB_CHECK(threw);
 }
 
 void TestPlaceStubInPadding()
@@ -135,16 +173,17 @@ void TestTrim()
 
     const uint64_t kept = gsf::rip::Trim(*set, all);
 
-    // The header, the bytes read and the stub stay. The rest are zeros.
+    // The header with the song's number at its end, the bytes read and the stub stay. The rest are zeros.
     XSFLIB_CHECK(kept == gsf::rip::kHeaderSize + 2 + set->stub.code.size());
-    XSFLIB_CHECK(set->image[gsf::rip::kHeaderSize - 1] == 0x77 && set->image[gsf::rip::kHeaderSize] == 0);
+    XSFLIB_CHECK(set->image[gsf::rip::kSongAddress - kRomBase - 1] == 0x77 && set->image[gsf::rip::kHeaderSize] == 0);
+    XSFLIB_CHECK(xsflib::LoadLe16(&set->image[gsf::rip::kSongAddress - kRomBase]) == 0);
     XSFLIB_CHECK(set->image[0x200] == 0x77 && set->image[0x201] == 0 && set->image[0x2FF] == 0x77);
     XSFLIB_CHECK(set->image[0x3FF] == 0);
     XSFLIB_CHECK(xsflib::LoadLe32(set->image.data()) == gsf::rip::BranchWord(kRomBase, set->stub.address));
-    XSFLIB_CHECK(!gsf::rip::CheckStubRoom(*set, all));
+    XSFLIB_CHECK(!gsf::rip::CheckReplacedBytes(*set, all));
 }
 
-void TestCheckStubRoom()
+void TestCheckReplacedBytes()
 {
     std::vector<uint8_t> rom(gsf::kMaxImageSize, 0xFF);
     rom[0x1000] = 0x11;
@@ -155,8 +194,25 @@ void TestCheckStubRoom()
     // A run that read the padding where the stub went.
     std::vector<uint8_t> reads(gsf::kMaxImageSize);
     reads[set->stub.address - kRomBase + 8] = 1;
+    XSFLIB_CHECK(gsf::rip::CheckReplacedBytes(*set, reads).has_value());
 
-    XSFLIB_CHECK(gsf::rip::CheckStubRoom(*set, reads).has_value());
+    // A run that read either byte where the song's number goes, but not the complement check before them.
+    std::vector<uint8_t> header(0x100);
+    header[0xBD] = 1;
+    XSFLIB_CHECK(!gsf::rip::CheckReplacedBytes(*set, header));
+    header[0xBE] = 1;
+    XSFLIB_CHECK(gsf::rip::CheckReplacedBytes(*set, header).has_value());
+    header[0xBE] = 0;
+    header[0xBF] = 1;
+    XSFLIB_CHECK(gsf::rip::CheckReplacedBytes(*set, header).has_value());
+
+    // A run that read the first word, which branches to the stub.
+    std::vector<uint8_t> first(0x10);
+    first[3] = 1;
+    XSFLIB_CHECK(gsf::rip::CheckReplacedBytes(*set, first).has_value());
+
+    // A map shorter than the header checks the bytes it has.
+    XSFLIB_CHECK(!gsf::rip::CheckReplacedBytes(*set, std::vector<uint8_t>(0xBF)));
 }
 
 void TestSetFiles()
@@ -170,8 +226,16 @@ void TestSetFiles()
 
     const std::map<std::string, std::vector<uint8_t>> files = {
         {"game.gsflib", gsf::rip::LibraryFile(*set, {})},
-        {"0009 Song 9.minigsf", gsf::rip::MiniFile(*set, 9, "game.gsflib", tags)},
+        {"0009 Song 9.minigsf", gsf::rip::MiniFile(9, "game.gsflib", tags)},
     };
+
+    // The mini's section: the cartridge's start, and the song's number at 0x080000BE.
+    xsflib::psf::PsfFile psf;
+    XSFLIB_REQUIRE(!xsflib::psf::ParsePsf(files.at("0009 Song 9.minigsf"), psf));
+    gsf::Section section;
+    XSFLIB_REQUIRE(!gsf::ParseSection(psf.program, section));
+    XSFLIB_CHECK(section.entry == kRomBase && section.address == 0x080000BE);
+    XSFLIB_CHECK(section.data == (std::vector<uint8_t>{9, 0}));
     gsf::LoadedSet loaded;
     const auto problem = gsf::LoadSet("0009 Song 9.minigsf", xsflib::testing::MapReader(files), loaded);
 
@@ -179,10 +243,10 @@ void TestSetFiles()
     XSFLIB_REQUIRE(!problem);
     XSFLIB_CHECK(loaded.entry == kRomBase);
     XSFLIB_REQUIRE(loaded.image.size() == set->image.size());
-    XSFLIB_CHECK(xsflib::LoadLe32(&loaded.image[set->stub.song_address - kRomBase]) == 9);
+    XSFLIB_CHECK(loaded.image[0xBE] == 9 && loaded.image[0xBF] == 0);
     XSFLIB_CHECK(loaded.tags.at("_lib") == "game.gsflib" && loaded.tags.at("title") == "Song 9");
     std::vector<uint8_t> library_image = loaded.image;
-    xsflib::StoreLe32(&library_image[set->stub.song_address - kRomBase], 0);
+    xsflib::StoreLe16(&library_image[gsf::rip::kSongAddress - kRomBase], 0);
     XSFLIB_CHECK(library_image == set->image);
 }
 
@@ -225,13 +289,17 @@ void TestTimedDmas()
     XSFLIB_CHECK(fifo_bytes.offset == 0x100 && fifo_bytes.size == 16);
     XSFLIB_CHECK(blank_bytes.offset == 0x300 && blank_bytes.size == 16);
 
-    // A source that stays reads one unit. One that counts down reads the units below it.
+    // In the cartridge, a source that the control fixes or counts down still counts up: the same bytes as the blank's.
+    // A FIFO's fixed source reads its four words up from the source too.
     gsf::rip::TimedDma fixed = blank;
     fixed.control = 0x9100;
     gsf::rip::TimedDma down = blank;
     down.control = 0x9080;
-    XSFLIB_CHECK(gsf::rip::FirstTransfer(fixed).offset == 0x300 && gsf::rip::FirstTransfer(fixed).size == 2);
-    XSFLIB_CHECK(gsf::rip::FirstTransfer(down).offset == 0x2F2 && gsf::rip::FirstTransfer(down).size == 16);
+    gsf::rip::TimedDma fifo_fixed = fifo;
+    fifo_fixed.control = 0xB740;
+    XSFLIB_CHECK(gsf::rip::FirstTransfer(fixed).offset == 0x300 && gsf::rip::FirstTransfer(fixed).size == 16);
+    XSFLIB_CHECK(gsf::rip::FirstTransfer(down).offset == 0x300 && gsf::rip::FirstTransfer(down).size == 16);
+    XSFLIB_CHECK(gsf::rip::FirstTransfer(fifo_fixed).offset == 0x100 && gsf::rip::FirstTransfer(fifo_fixed).size == 16);
 
     // The trim has to keep each first transfer whole.
     std::string error;
@@ -350,10 +418,11 @@ void TestMarkCodeSpan()
 int main()
 {
     TestPlaceStubAfterImage();
+    TestMiniOfLargeImage();
     TestPlaceStubInPadding();
     TestCoverageFrames();
     TestTrim();
-    TestCheckStubRoom();
+    TestCheckReplacedBytes();
     TestSetFiles();
     TestTimedDmas();
     TestTimedDmaStarts();

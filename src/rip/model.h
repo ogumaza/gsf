@@ -39,6 +39,7 @@ struct TimedDma
 
 // The bytes of the cartridge that `dma` reads in its first transfer, which it reads whatever the order of the
 // interrupts: the offset of the first of them in the cartridge, and their count. A sound FIFO's transfer is 16 bytes.
+// `dma`'s source is in the cartridge, where the source always counts up.
 struct DmaBytes
 {
     uint32_t offset = 0;

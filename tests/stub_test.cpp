@@ -13,6 +13,7 @@
 #include "agblib/agb/system.h"
 #include "ntdlib/arm/assembler.h"
 #include "ntdlib/arm/cpu.h"
+#include "xsflib/bytes.h"
 #include "xsflib/testing/check.h"
 
 #include "rip/model.h"
@@ -67,9 +68,11 @@ std::vector<uint8_t> Counter(uint32_t address, uint32_t word)
     return a.Finish();
 }
 
-std::vector<uint8_t> TestImage()
+// The test's image, with `song` where a mini stores the song's number.
+std::vector<uint8_t> TestImage(uint32_t song = kSong)
 {
     std::vector<uint8_t> image(kImageSize);
+    xsflib::StoreLe16(&image[gsf::rip::kSongAddress - kRomBase], uint16_t(song));
 
     ntdlib::arm::ArmAssembler record(kRecord);
     record.LoadConstant(12, kRecorded);
@@ -131,7 +134,7 @@ agblib::agb::Rom RomWith(const std::vector<uint8_t>& image)
 void TestStart()
 {
     std::vector<uint8_t> image = TestImage();
-    const gsf::rip::Stub stub = gsf::rip::BuildStub(TestPlan(), kStubAddress, kSong);
+    const gsf::rip::Stub stub = gsf::rip::BuildStub(TestPlan(), kStubAddress);
     Place(image, kStubAddress, stub.code);
     const agblib::agb::Rom rom = RomWith(image);
     agblib::agb::System system(rom);
@@ -143,10 +146,8 @@ void TestStart()
     const ntdlib::arm::StopReason reason = cpu.Run(1'000'000);
 
     XSFLIB_CHECK(reason == ntdlib::arm::StopReason::kStopAddress);
-    XSFLIB_CHECK(stub.song_address > stub.loop && stub.song_address < stub.address + stub.code.size());
-    XSFLIB_CHECK(system.Load(stub.song_address, 4) == kSong);
 
-    // The operations, in order: the song's number is the stub's word.
+    // The operations, in order: the song's number is the header's halfword at kSongAddress.
     XSFLIB_CHECK(system.Load(kEwram + 0x200, 4) == 7);
     XSFLIB_CHECK(system.Load(kEwram + 0x204, 4) == 40);
     XSFLIB_CHECK(system.Load(kEwram + 0x300, 4) == 0x04030201 && system.Load(kEwram + 0x304, 4) == 0x08070605);
@@ -157,7 +158,7 @@ void TestStart()
     // The handler is in place, and the interrupts are on: DISPSTAT's VBlank bit, IE, IME and the CPSR. SOUNDBIAS is
     // the BIOS's.
     const uint32_t handler = system.Load(gsf::rip::kIrqHandler, 4);
-    XSFLIB_CHECK(handler > stub.loop && handler < stub.song_address);
+    XSFLIB_CHECK(handler > stub.loop && handler < stub.address + stub.code.size());
     XSFLIB_CHECK(system.Load(0x04000004, 2) == 0x0008);
     XSFLIB_CHECK(system.Load(0x04000200, 2) == 0x0011);
     XSFLIB_CHECK(system.Load(0x04000208, 2) == 1);
@@ -166,10 +167,31 @@ void TestStart()
     XSFLIB_CHECK(cpu.Reg(ntdlib::arm::kSp) == gsf::rip::kSystemStack);
 }
 
+void TestSongHalfword()
+{
+    // A plan without tables reads both bytes at kSongAddress as one halfword, and nothing after them: 0xFF at 0xC0 and
+    // 0xC1 doesn't reach the number.
+    std::vector<uint8_t> image = TestImage(0x1234);
+    image[0xC0] = 0xFF;
+    image[0xC1] = 0xFF;
+    StubPlan plan;
+    plan.start = {Operation::Call(kRecord, {{5}, {1, true}})};
+    const gsf::rip::Stub stub = gsf::rip::BuildStub(plan, kStubAddress);
+    Place(image, kStubAddress, stub.code);
+    const agblib::agb::Rom rom = RomWith(image);
+    agblib::agb::System system(rom);
+    ntdlib::arm::Cpu& cpu = system.Cpu();
+    cpu.Jump(stub.address, ntdlib::arm::Mode::kSystem);
+    cpu.SetStopAddress(stub.loop);
+
+    XSFLIB_CHECK(cpu.Run(1'000'000) == ntdlib::arm::StopReason::kStopAddress);
+    XSFLIB_CHECK(system.Load(kRecorded + 4, 4) == 1 + 0x1234);
+}
+
 void TestInterruptsAndLoop()
 {
     std::vector<uint8_t> image = TestImage();
-    const gsf::rip::Stub stub = gsf::rip::BuildStub(TestPlan(), kStubAddress, kSong);
+    const gsf::rip::Stub stub = gsf::rip::BuildStub(TestPlan(), kStubAddress);
     Place(image, kStubAddress, stub.code);
     const agblib::agb::Rom rom = RomWith(image);
     agblib::agb::System system(rom);
@@ -272,6 +294,7 @@ void TestBranchWord()
 int main()
 {
     TestStart();
+    TestSongHalfword();
     TestInterruptsAndLoop();
     TestModelRun();
     TestStandIn();

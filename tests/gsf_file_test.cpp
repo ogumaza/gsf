@@ -69,6 +69,25 @@ void TestLoadSet()
     XSFLIB_CHECK(set.image[7] == 0xAA && set.image[8] == 5 && set.image[9] == 0 && set.image[12] == 0xAA);
     XSFLIB_CHECK(set.tags.at("title") == "Song 5");
     XSFLIB_CHECK(set.reserved.empty());
+
+    // A section at 0x09xxxxxx, as sets of an image of 16 MiB or more had until the song's number moved into the
+    // header, lands 16 MiB into the image.
+    Section large;
+    large.data = std::vector<uint8_t>(0x01000008, 0);
+    Section high;
+    high.address = 0x09000004;
+    high.data = {1, 2, 3, 4};
+    xsflib::psf::Tags high_tags;
+    high_tags["_lib"] = "large.gsflib";
+    const std::map<std::string, std::vector<uint8_t>> large_files = {
+        {"large.gsflib", gsf::WriteGsf(large, {})},
+        {"high.minigsf", gsf::WriteGsf(high, high_tags)},
+    };
+    LoadedSet loaded_large;
+    XSFLIB_REQUIRE(!gsf::LoadSet("high.minigsf", xsflib::testing::MapReader(large_files), loaded_large));
+    XSFLIB_REQUIRE(loaded_large.image.size() == 0x01000008);
+    XSFLIB_CHECK(loaded_large.image[0x01000003] == 0 && loaded_large.image[0x01000004] == 1 &&
+                 loaded_large.image[0x01000007] == 4);
 }
 
 void TestLoadSetKeepsReserved()

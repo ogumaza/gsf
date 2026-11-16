@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,6 +18,16 @@
 
 namespace gsf::rip
 {
+
+bool Driver::HasEffect(int) const
+{
+    return false;
+}
+
+StubPlan Driver::PlanWithEffects() const
+{
+    return Plan();
+}
 
 const GameTags* Driver::Tags() const
 {
@@ -64,6 +75,33 @@ void MarkCodeSpan(std::vector<uint8_t>& reads, std::initializer_list<uint32_t> r
     if (last < reads.size())
     {
         std::fill(reads.begin() + std::ptrdiff_t(first), reads.begin() + std::ptrdiff_t(last + 1), uint8_t{1});
+    }
+}
+
+void KeepWholeSpans(std::vector<uint8_t>& reads, std::span<const RomSpan> spans)
+{
+    for (const RomSpan& span : spans)
+    {
+        const size_t first = span.address - agblib::agb::kRomBase;
+        const size_t last = first + span.size;
+        if (first >= reads.size())
+        {
+            continue;
+        }
+
+        const auto begin = reads.begin() + std::ptrdiff_t(first);
+        const auto end = reads.begin() + std::ptrdiff_t(std::min(last, reads.size()));
+        if (std::none_of(begin, end, [](uint8_t mark) { return mark != 0; }))
+        {
+            continue;
+        }
+
+        if (reads.size() < last)
+        {
+            reads.resize(last);
+        }
+
+        std::fill(reads.begin() + std::ptrdiff_t(first), reads.begin() + std::ptrdiff_t(last), uint8_t{1});
     }
 }
 

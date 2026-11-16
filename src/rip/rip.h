@@ -33,8 +33,8 @@ struct SetImage
 };
 
 // Puts the stub for `plan` after the end of `rom`, or in its padding when the image fills the 32 MiB: the run of the
-// image's last byte value at its end, or else its longest run of 0x00 or 0xFF. The library starts song `first_song`.
-// Returns nothing and sets `error` when there's no room.
+// image's last byte value at its end, or else its longest run of 0x00 or 0xFF. The library starts song `first_song`,
+// which goes at kSongAddress. Returns nothing and sets `error` when there's no room, or for a song above kMaxSong.
 std::optional<SetImage> PlaceStub(const std::vector<uint8_t>& rom, const StubPlan& plan, uint32_t first_song,
                                   std::string& error);
 
@@ -63,8 +63,9 @@ Coverage CoverSong(const agblib::agb::Rom& rom, const Driver& driver, const Stub
 // Adds the marks of `reads` to `all`.
 void AddReads(std::vector<uint8_t>& all, const std::vector<uint8_t>& reads);
 
-// Returns an error when a run read a byte that the stub replaced, or nothing.
-std::optional<std::string> CheckStubRoom(const SetImage& set, const std::vector<uint8_t>& reads);
+// Returns an error when a run read a byte that the set replaced, or nothing: the first word, which branches to the
+// stub, the header's bytes at kSongAddress, or a byte of the stub in the image's padding.
+std::optional<std::string> CheckReplacedBytes(const SetImage& set, const std::vector<uint8_t>& reads);
 
 // Returns an error when the trim would zero a byte that one of `dmas` reads in its first transfer, or nothing. The
 // model runs no timed DMA, so `reads` has none of their reads.
@@ -91,8 +92,9 @@ std::string FileTitle(const std::string& title);
 // a code that isn't four letters and digits.
 std::string ProductCode(const std::string& code);
 
-// The library's file, and a mini's file that starts song `song` with `library`, the library's name.
+// The library's file, and a mini's file that starts song `song` with `library`, the library's name. The mini's
+// section is the song's number at kSongAddress. MiniFile() throws std::logic_error for a song above kMaxSong.
 std::vector<uint8_t> LibraryFile(const SetImage& set, const xsflib::psf::Tags& tags);
-std::vector<uint8_t> MiniFile(const SetImage& set, uint32_t song, const std::string& library, xsflib::psf::Tags tags);
+std::vector<uint8_t> MiniFile(uint32_t song, const std::string& library, xsflib::psf::Tags tags);
 
 } // namespace gsf::rip

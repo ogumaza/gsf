@@ -14,7 +14,8 @@ players built on mGBA play the sets.
 - AlphaDream's driver: Mario & Luigi: Superstar Saga and two Hamtaro games (Tottoko Hamtaro 4: Nijiiro Daikoushin
   Dechu and Tottoko Hamtaro: Hamu-Hamu Sports)
 - Brownie Brown's driver: Sword of Mana, the US release, and Magical Vacation. Each sound that uses the music's
-  channels is a song. The sound effects aren't ripped.
+  channels is a song. With `--effects`, Sword of Mana's other sounds, its sound effects, are ripped too. Magical
+  Vacation's sound effects aren't ripped.
 - ITE Media's driver: Hugo: The Evil Mirror, the US release. Each song of the game's bank is a song, and it plays at
   the music volume that the game sets for it. A song that ends plays out to its last sound. In the game, the
   interrupted music comes back after a jingle's last row and cuts the jingle short. The audio of the game's videos
@@ -32,10 +33,16 @@ players built on mGBA play the sets.
   the US releases. Each sequence of the music is a song. A
   sequence that the game plays by a music number plays as the first such number sets it up: with its voices, its
   volume and its muted tracks. In Super Mario Advance 2, the tracks that play only while Mario rides Yoshi stay silent.
+  With `--effects`, A Link to the Past's sound effects are ripped too, each on the player that the game plays it on.
+  The game never plays the second sequence of sound effects, or three tracks of the first, so their titles say
+  "Unused" and they come last. A few of the unused ones play samples from outside the cartridge, which no set can
+  hold, and aren't ripped. The Super Mario Advance games' sound effects aren't ripped.
 - Quintet's driver: Super Robot Taisen A, D, R and J; Bouken Yuuki Plaston GP, Bouken Yuuki Densetsu Plaston Gate and
   Bouken Yuuki PlaStar World: Densetsu no Plust Gate EX; Legend of Dynamic: Goushouden; Blender Bros.; Doubutsu no
   Shima no Chobi Gurumi; Gachasute! Dyna Device Red and Blue; Robopon 2: Ring Version and Cross Version; and Magical
-  Fengshen. The songs of each music file are songs, numbered one file after another. The sound effects aren't ripped.
+  Fengshen. The songs of each music file are songs, numbered one file after another. With `--effects`, the sound
+  effects of the four Super Robot Taisen games are ripped too, started through the game's routine for them. The other
+  games' sound effects aren't ripped.
 - MP2K, the sound driver of Nintendo's SDK, which most GBA games use. Each entry of the song table is a song, and it
   plays as the driver starts it. Where a game's code sets a song up before it starts it, with another number of
   channels, a reverb or a volume, the set does the same. Golden Sun: The Lost Age has Camelot's version of the driver
@@ -63,6 +70,11 @@ instead. The set is:
   for, such as Aero the Acro-Bat, in the order in which a player first hears them.
 - `!playlist.m3u`, which lists the minis in order
 
+With `--effects`, the set holds the game's sound effects too, for the games above whose sound effects `gsfrip` can
+start. They follow the music, as `Effect N` with the number that `--list` gives, and the stub starts each one as the
+game's code does. A sound effect plays alone, with no music under it. Most play once and end, so their length is their
+end and a fade of 1 s. The few that loop get two passes and a fade of 10 s. In the game, the code stops them.
+
 A game with a driver for each part, such as A Link to the Past & Four Swords, gets a folder for each part's set inside
 that folder, named after the part: `A Link to the Past` and `Four Swords`. Each holds a set as above, with a library
 of its own.
@@ -72,7 +84,8 @@ of the game's image. In an image that fills the cartridge's 32 MiB, it goes in t
 image's longest run of zeros or of 0xFF bytes. It sets up the stacks and an interrupt handler, makes the calls that the
 game's start-up code makes to set up the sound driver, and starts the song whose number the mini stores. It then runs
 the driver as the game does: the routines that the game's interrupt handler calls, and those that its main loop calls
-after each vertical blank. Each mini holds the song's number, a word at a fixed address in the stub.
+after each vertical blank. Each mini holds the song's number: two bytes at 0x080000BE, in the reserved bytes at the
+end of the cartridge's header.
 
 Each song then plays on a model of the console that runs the game's sound driver:
 
@@ -82,8 +95,8 @@ Each song then plays on a model of the console that runs the game's sound driver
 - Coverage records every byte of the cartridge that the run reads. The run lasts for the length and fade of the song,
   half the length more for a song that loops, and a margin of 10 s.
 - The library keeps only the bytes that some song read, the cartridge's header and the stub. The other bytes are
-  zeros, which compress to almost nothing. With Nintendo R&D1's driver, the library also keeps the whole of each sample
-  that a song read part of, and all of the driver's code. With Quintet's driver, whose sound DMA reads each sample
+  zeros, which compress to almost nothing. With Nintendo R&D1's driver, the library also keeps the whole of each
+  sample, instrument record and sample header that a song read part of, and all of the driver's code. With Quintet's driver, whose sound DMA reads each sample
   from the cartridge, the library keeps the whole of each sample that a song starts. With MP2K, the library keeps all
   of the driver's code. With Brownie Brown's driver, the library keeps the whole of each sample that a song read part
   of, and all of the driver's code.
@@ -115,7 +128,10 @@ Options:
 
 - `-o DIR`, `--output DIR`: write the set to DIR
 - `--list`: list the songs of each set
-- `--only REGEX`: rip only the songs whose names or titles match, such as `"^Song 12$"`, in each set
+- `--only REGEX`: rip only the songs whose names or titles match, such as `"^Song 12$"`, in each set. A sound effect
+  matches as `Effect N` too
+- `--effects`: rip the sound effects too, where `gsfrip` can start them
+- `--bgm`: rip only the music (the default)
 - `--no-length`: skip the length analysis
 - `--no-trim`: keep the whole image in the library
 - `--margin S`: the seconds of play after the fade that the coverage still covers (default 10)

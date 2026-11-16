@@ -6,7 +6,8 @@
 //
 // The game calls its sound init, and requests a sound by its number. The driver starts the sound at the end of the next
 // frame. The game's handler of the vertical blank calls the per-frame routine. The sounds that use the music's PSG
-// channels are the music, and each gets a mini. The others are sound effects. They get no minis.
+// channels are the music, and each gets a mini. The others are sound effects. With --effects, they get minis in a game
+// whose profile has them: the stub requests a sound effect as it requests the music.
 //
 // In the Sword of Mana revision, the init sets up Timer 0 and the FIFOs' DMAs. The game copies the mixer to IWRAM.
 // Each time the FIFOs have played 16 points, the DMAs' interrupts run the mixer once: it acknowledges both. The stub
@@ -56,6 +57,7 @@ struct BrownieProfile
     uint32_t request = 0;            // the driver's request of a sound: r0 = the sound
     std::vector<uint32_t> fifo_irqs; // the routines of DMA 1's interrupt and, where it has one, DMA 2's
     uint16_t waitcnt = 0;            // WAITCNT as the game sets it
+    bool effects = false;            // whether gsf rips the sound effects
 };
 
 // Sword of Mana, US. The game's sound init (0x080A1560) calls the driver's init. It then copies the mixer from
@@ -68,7 +70,8 @@ struct BrownieProfile
 // It requests a sound through 0x0805B564, and that routine calls the driver's request. The routines of DMA 1's and
 // DMA 2's interrupts go through 0x0805B58C and 0x0805B598.
 //
-// Both games set WAITCNT to 0x45B7.
+// Both games set WAITCNT to 0x45B7. Sword of Mana's sound effects play on the driver's channels for sound effects,
+// through the same request.
 const std::vector<BrownieProfile>& Profiles()
 {
     static const std::vector<BrownieProfile> kProfiles = {
@@ -79,6 +82,7 @@ const std::vector<BrownieProfile>& Profiles()
             .request = 0x080A16EC,
             .fifo_irqs = {0x03003150},
             .waitcnt = 0x45B7,
+            .effects = true,
         },
         {
             .code = "AMVJ",
@@ -116,15 +120,8 @@ constexpr uint32_t kSampleRecordBytes = 12;
 // The sample sets of the Sword of Mana revision each name 12 records.
 constexpr int kSetSamples = 12;
 
-// A run of bytes of the cartridge.
-struct Span
-{
-    uint32_t address = 0;
-    uint32_t size = 0;
-};
-
 // The points of the sample whose record is at `record`, or nothing for an address that holds no sample's record.
-std::optional<Span> SampleAt(const agblib::agb::Rom& rom, uint32_t record)
+std::optional<RomSpan> SampleAt(const agblib::agb::Rom& rom, uint32_t record)
 {
     if (!rom.Contains(record, kSampleRecordBytes))
     {
@@ -139,12 +136,12 @@ std::optional<Span> SampleAt(const agblib::agb::Rom& rom, uint32_t record)
         return std::nullopt;
     }
 
-    return Span{start, end - start};
+    return RomSpan{start, end - start};
 }
 
 // The points of each sample in the sample table. The table has no count: it ends before the first entry that names no
 // sample, or a set with an entry that names none.
-std::vector<Span> SamplePoints(const agblib::agb::Rom& rom, const brownie::DriverInfo& info)
+std::vector<RomSpan> SamplePoints(const agblib::agb::Rom& rom, const brownie::DriverInfo& info)
 {
     const bool sets = info.revision == brownie::Revision::kSwordOfMana;
     std::set<std::pair<uint32_t, uint32_t>> found;
@@ -163,10 +160,10 @@ std::vector<Span> SamplePoints(const agblib::agb::Rom& rom, const brownie::Drive
             }
         }
 
-        std::vector<Span> samples;
+        std::vector<RomSpan> samples;
         for (const uint32_t record : records)
         {
-            if (const std::optional<Span> sample = SampleAt(rom, record))
+            if (const std::optional<RomSpan> sample = SampleAt(rom, record))
             {
                 samples.push_back(*sample);
             }
@@ -177,13 +174,13 @@ std::vector<Span> SamplePoints(const agblib::agb::Rom& rom, const brownie::Drive
             break;
         }
 
-        for (const Span& sample : samples)
+        for (const RomSpan& sample : samples)
         {
             found.insert({sample.address, sample.size});
         }
     }
 
-    std::vector<Span> points;
+    std::vector<RomSpan> points;
     for (const auto& [address, size] : found)
     {
         points.push_back({address, size});
@@ -221,14 +218,15 @@ public:
     // no request.
     bool HasSong(int song) const override
     {
-        std::vector<brownie::SongChannel> channels;
-        if (song <= 0 || !brownie::ReadSong(rom_, info_, song, channels))
-        {
-            return false;
-        }
+        const std::optional<bool> music = IsMusic(song);
+        return music && *music;
+    }
 
-        return std::any_of(channels.begin(), channels.end(),
-                           [](const brownie::SongChannel& c) { return c.channel < brownie::kFirstEffectChannel; });
+    // A sound effect: a sound with channels, none of them the music's, in a game whose profile has sound effects.
+    bool HasEffect(int song) const override
+    {
+        const std::optional<bool> music = profile_.effects ? IsMusic(song) : std::nullopt;
+        return music && !*music;
     }
 
     StubPlan Plan() const override
@@ -290,29 +288,7 @@ public:
         const auto [lowest, highest] = std::minmax_element(routines.begin(), routines.end());
         MarkCodeSpan(reads, {*lowest, *highest}, kCodeTail);
 
-        for (const Span& span : samples_)
-        {
-            const size_t first = span.address - agblib::agb::kRomBase;
-            const size_t last = first + span.size;
-            if (first >= reads.size())
-            {
-                continue;
-            }
-
-            const auto begin = reads.begin() + std::ptrdiff_t(first);
-            const auto end = reads.begin() + std::ptrdiff_t(std::min(last, reads.size()));
-            if (std::none_of(begin, end, [](uint8_t mark) { return mark != 0; }))
-            {
-                continue;
-            }
-
-            if (reads.size() < last)
-            {
-                reads.resize(last);
-            }
-
-            std::fill(reads.begin() + std::ptrdiff_t(first), reads.begin() + std::ptrdiff_t(last), uint8_t{1});
-        }
+        KeepWholeSpans(reads, samples_);
     }
 
     std::optional<xsflib::rip::Timing> SongTiming(int song) const override
@@ -322,10 +298,24 @@ public:
     }
 
 private:
+    // Whether sound `song` is music: whether it uses one of the music's PSG channels. Nothing for a sound that can't
+    // play or has no channels.
+    std::optional<bool> IsMusic(int song) const
+    {
+        std::vector<brownie::SongChannel> channels;
+        if (song <= 0 || !brownie::ReadSong(rom_, info_, song, channels) || channels.empty())
+        {
+            return std::nullopt;
+        }
+
+        return std::any_of(channels.begin(), channels.end(),
+                           [](const brownie::SongChannel& c) { return c.channel < brownie::kFirstEffectChannel; });
+    }
+
     const agblib::agb::Rom& rom_;
     brownie::DriverInfo info_;
     const BrownieProfile& profile_;
-    std::vector<Span> samples_;
+    std::vector<RomSpan> samples_;
 };
 
 const BrownieProfile* FindBrownieProfile(std::string_view code, uint8_t version, uint32_t frame)

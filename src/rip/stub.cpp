@@ -56,7 +56,7 @@ constexpr uint16_t Bit(int r)
 class OperationWriter
 {
 public:
-    OperationWriter(ArmAssembler& a, int song_word) : a_(a), song_word_(song_word)
+    explicit OperationWriter(ArmAssembler& a) : a_(a)
     {
     }
 
@@ -162,8 +162,7 @@ private:
         const int label = a_.NewLabel();
         const int skip = a_.NewLabel();
         tables_.emplace_back(label, routines);
-        a_.LoadAddress(kR12, song_word_);
-        a_.Ldr(kR12, kR12);
+        LoadSong(kR12);
         a_.LoadAddress(kLr, label);
         a_.LdrIndexed(kR12, kLr, kR12, 2);
         a_.Sub(kR12, kR12, 0, true);
@@ -179,8 +178,7 @@ private:
         {
             const int label = a_.NewLabel();
             tables_.emplace_back(label, value.table);
-            a_.LoadAddress(kR12, song_word_);
-            a_.Ldr(kR12, kR12);
+            LoadSong(kR12);
             a_.LoadAddress(rd, label);
             a_.LdrIndexed(rd, rd, kR12, 2);
             return;
@@ -192,12 +190,18 @@ private:
             return;
         }
 
-        a_.LoadAddress(rd, song_word_);
-        a_.Ldr(rd, rd);
+        LoadSong(rd);
         if (value.constant != 0)
         {
             a_.Add(rd, rd, value.constant);
         }
+    }
+
+    // rd = the song's number, the halfword at kSongAddress.
+    void LoadSong(int rd)
+    {
+        a_.Mov(rd, kSongAddress & 0xFF000000);
+        a_.Ldrh(rd, rd, int(kSongAddress & 0xFF));
     }
 
     // A loop of words where the size is a multiple of 4, or else of bytes.
@@ -230,7 +234,6 @@ private:
     }
 
     ArmAssembler& a_;
-    int song_word_;
     std::vector<std::pair<int, std::vector<uint32_t>>> tables_;
 };
 
@@ -314,16 +317,15 @@ uint32_t StubSize(const StubPlan& plan)
 {
     // The size doesn't depend on the address: the literal pool keeps each label's address apart from the constants,
     // even where the two hold the same value.
-    return uint32_t(BuildStub(plan, 0x08000000, 0).code.size());
+    return uint32_t(BuildStub(plan, 0x08000000).code.size());
 }
 
-Stub BuildStub(const StubPlan& plan, uint32_t address, uint32_t song)
+Stub BuildStub(const StubPlan& plan, uint32_t address)
 {
     ArmAssembler a(address);
-    const int song_word = a.NewLabel();
     const int interrupt_handler = a.NewLabel();
     const int loop = a.NewLabel();
-    OperationWriter writer(a, song_word);
+    OperationWriter writer(a);
 
     // The stacks of the modes that the stub runs in, with the IRQs and the FIQs off.
     a.SetControl(kModeIrq | kIrqsOff | kFiqsOff);
@@ -373,15 +375,12 @@ Stub BuildStub(const StubPlan& plan, uint32_t address, uint32_t song)
     a.Bind(interrupt_handler);
     WriteInterruptHandler(a, writer, plan);
 
-    // The literal pool, then the song's word and the tables, which can be larger than a load's reach.
+    // The literal pool, then the tables, which can be larger than a load's reach.
     a.Pool();
-    a.Bind(song_word);
-    a.Word(song);
     writer.WriteTables();
 
     Stub stub;
     stub.address = address;
-    stub.song_address = a.Address(song_word);
     stub.loop = a.Address(loop);
     stub.code = a.Finish();
     return stub;

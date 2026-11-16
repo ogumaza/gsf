@@ -10,7 +10,10 @@
 // blank runs the per-frame routine. The driver doesn't mix: each FIFO's DMA reads a sample from the cartridge. The
 // model runs no DMA, so the library keeps the whole of each sample whose header a run read.
 //
-// gsf rips the songs. The sound effects, which agblib numbers after each file's songs, get no minis.
+// gsf rips the songs. agblib numbers the sound effects after each file's songs. With --effects, a Super Robot Taisen
+// game gets a mini for each sound effect too. The game's routine that plays a sound effect finds it in the sound
+// effects' file by its index, and calls the driver's routine for sound effects. It plays on the driver's 6 channels for
+// sound effects.
 
 #include <algorithm>
 #include <cstdint>
@@ -35,6 +38,7 @@ namespace
 namespace quintet = agblib::quintet;
 
 // The routines of a game's driver, all Thumb code. `after_init` and `loader` are 0 in a game without music files.
+// `play_effect` is 0 in a game whose sound effects gsf doesn't rip.
 struct Profile
 {
     const char* code = "";
@@ -43,14 +47,18 @@ struct Profile
     uint32_t loader = 0;
     uint32_t play = 0;
     uint32_t frame = 0;
+    uint32_t play_effect = 0;
 };
 
 constexpr Profile kProfiles[] = {
-    // The Super Robot Taisen games: the game's sound init, its play routine of song r0 and its per-frame routine.
-    {"ASRJ", 0x080034F0, 0, 0, 0x08003550, 0x08003544},
-    {"A6SJ", 0x08004A30, 0, 0, 0x08004A94, 0x08004A84},
-    {"AJ9J", 0x08004AB4, 0, 0, 0x08004B18, 0x08004B08},
-    {"B6JJ", 0x080083D0, 0, 0, 0x08008440, 0x08008430},
+    // The Super Robot Taisen games: the game's sound init, its play routine of song r0, its per-frame routine and its
+    // routine that plays sound effect r0. The play routines walk the music's file or the sound effects' file to the
+    // song, then call the driver's routine: ASRJ's 0x0805D1FC and 0x0805D254, A6SJ's 0x080713E0 and 0x08071438, AJ9J's
+    // 0x08057294 and 0x080572EC, and B6JJ's 0x0807D250 and 0x0807D2B8.
+    {"ASRJ", 0x080034F0, 0, 0, 0x08003550, 0x08003544, 0x08003594},
+    {"A6SJ", 0x08004A30, 0, 0, 0x08004A94, 0x08004A84, 0x08004AD8},
+    {"AJ9J", 0x08004AB4, 0, 0, 0x08004B18, 0x08004B08, 0x08004B5C},
+    {"B6JJ", 0x080083D0, 0, 0, 0x08008440, 0x08008430, 0x08008498},
 
     // The games with music files: the driver's init, the game's call after it, the loader of the file whose first
     // word r0 gives, the play routine of song r0 of that file and the per-frame routine.
@@ -107,35 +115,25 @@ public:
         return size_t(song - file.first_song) < file.song_addresses.size();
     }
 
+    bool HasEffect(int song) const override
+    {
+        if (!profile_.play_effect || song < 0 || song >= SongCount())
+        {
+            return false;
+        }
+
+        const quintet::DriverInfo& file = FileOf(song);
+        return quintet::EffectIndex(file, song - file.first_song) >= 0;
+    }
+
     StubPlan Plan() const override
     {
-        // Each mini's number picks the file and the song in it.
-        std::vector<uint32_t> file_words;
-        std::vector<uint32_t> indices;
-        const std::vector<uint32_t>& words = files_.front().music_files;
-        for (int song = 0; song < SongCount(); song++)
-        {
-            const size_t file = quintet::FileOfSong(files_, song);
-            file_words.push_back(file < words.size() ? words[file] : 0);
-            indices.push_back(uint32_t(song - files_[file].first_song));
-        }
+        return MakePlan(false);
+    }
 
-        StubPlan plan;
-        plan.start.push_back(Operation::Call(profile_.sound_init | 1));
-        if (profile_.after_init)
-        {
-            plan.start.push_back(Operation::Call(profile_.after_init | 1));
-        }
-
-        if (profile_.loader)
-        {
-            plan.start.push_back(Operation::Call(profile_.loader | 1, {SongTable(file_words)}));
-        }
-
-        plan.start.push_back(Operation::Call(profile_.play | 1, {SongTable(indices)}));
-        plan.interrupts = kIrqVblank;
-        plan.handlers = {{kIrqVblank, {Operation::Call(profile_.frame | 1)}}};
-        return plan;
+    StubPlan PlanWithEffects() const override
+    {
+        return MakePlan(profile_.play_effect != 0);
     }
 
     void CompleteReads(std::vector<uint8_t>& reads) const override
@@ -171,6 +169,51 @@ public:
     }
 
 private:
+    // The plan of the stub: the game's sound init and the calls after it, then the song's start, or with `effects` a
+    // sound effect's start through the game's routine for sound effects.
+    StubPlan MakePlan(bool effects) const
+    {
+        // Each mini's number picks the file and the song in it, or the sound effect.
+        std::vector<uint32_t> file_words;
+        std::vector<uint32_t> indices;
+        std::vector<uint32_t> routines;
+        const std::vector<uint32_t>& words = files_.front().music_files;
+        for (int song = 0; song < SongCount(); song++)
+        {
+            const size_t file = quintet::FileOfSong(files_, song);
+            const int index = song - files_[file].first_song;
+            const int effect = effects ? quintet::EffectIndex(files_[file], index) : -1;
+            file_words.push_back(file < words.size() ? words[file] : 0);
+            indices.push_back(uint32_t(effect >= 0 ? effect : index));
+            routines.push_back((effect >= 0 ? profile_.play_effect : profile_.play) | 1);
+        }
+
+        StubPlan plan;
+        plan.start.push_back(Operation::Call(profile_.sound_init | 1));
+        if (profile_.after_init)
+        {
+            plan.start.push_back(Operation::Call(profile_.after_init | 1));
+        }
+
+        if (profile_.loader)
+        {
+            plan.start.push_back(Operation::Call(profile_.loader | 1, {SongTable(file_words)}));
+        }
+
+        if (effects)
+        {
+            plan.start.push_back(Operation::CallFromTable(routines, {SongTable(indices)}));
+        }
+        else
+        {
+            plan.start.push_back(Operation::Call(profile_.play | 1, {SongTable(indices)}));
+        }
+
+        plan.interrupts = kIrqVblank;
+        plan.handlers = {{kIrqVblank, {Operation::Call(profile_.frame | 1)}}};
+        return plan;
+    }
+
     const quintet::DriverInfo& FileOf(int song) const
     {
         return files_[quintet::FileOfSong(files_, song)];

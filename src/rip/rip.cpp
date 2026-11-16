@@ -93,6 +93,13 @@ std::optional<SetImage> PlaceStub(const std::vector<uint8_t>& rom, const StubPla
         return std::nullopt;
     }
 
+    if (first_song > kMaxSong)
+    {
+        error = "song " + std::to_string(first_song) + " is above " + std::to_string(kMaxSong) +
+                ", the highest number a mini can store";
+        return std::nullopt;
+    }
+
     // The stub goes after the image where there's room, so that it replaces nothing of the game's.
     const uint32_t size = StubSize(plan);
     const size_t end = (rom.size() + 3) & ~size_t{3};
@@ -115,7 +122,7 @@ std::optional<SetImage> PlaceStub(const std::vector<uint8_t>& rom, const StubPla
     }
 
     SetImage set;
-    set.stub = BuildStub(plan, kRomBase + *offset, first_song);
+    set.stub = BuildStub(plan, kRomBase + *offset);
     if (*offset + set.stub.code.size() > room_end)
     {
         throw std::logic_error("the stub at its place is larger than StubSize() gave");
@@ -125,6 +132,7 @@ std::optional<SetImage> PlaceStub(const std::vector<uint8_t>& rom, const StubPla
     set.image.resize(std::max<size_t>(rom.size(), *offset + set.stub.code.size()), 0);
     std::copy(set.stub.code.begin(), set.stub.code.end(), set.image.begin() + *offset);
     xsflib::StoreLe32(set.image.data(), BranchWord(kRomBase, set.stub.address));
+    xsflib::StoreLe16(&set.image[kSongAddress - kRomBase], uint16_t(first_song));
 
     return set;
 }
@@ -179,8 +187,27 @@ void AddReads(std::vector<uint8_t>& all, const std::vector<uint8_t>& reads)
     }
 }
 
-std::optional<std::string> CheckStubRoom(const SetImage& set, const std::vector<uint8_t>& reads)
+std::optional<std::string> CheckReplacedBytes(const SetImage& set, const std::vector<uint8_t>& reads)
 {
+    // The set replaces these bytes whatever the trim, so --no-trim doesn't help.
+    for (size_t i = 0; i < 4 && i < reads.size(); i++)
+    {
+        if (reads[i])
+        {
+            return "the music reads the cartridge's first word, which branches to the stub, at " +
+                   agblib::agb::Hex(kRomBase + uint32_t(i)) + ". --no-trim doesn't help";
+        }
+    }
+
+    for (size_t i = kSongAddress - kRomBase; i < kSongAddress - kRomBase + 2 && i < reads.size(); i++)
+    {
+        if (reads[i])
+        {
+            return "the music reads the header's bytes where the song's number goes, at " +
+                   agblib::agb::Hex(kRomBase + uint32_t(i)) + ". --no-trim doesn't help";
+        }
+    }
+
     const size_t first = set.stub.address - kRomBase;
     const size_t last = std::min(reads.size(), first + set.stub.code.size());
     for (size_t i = first; i < last; i++)
@@ -315,12 +342,17 @@ std::vector<uint8_t> LibraryFile(const SetImage& set, const xsflib::psf::Tags& t
     return WriteGsf(section, tags);
 }
 
-std::vector<uint8_t> MiniFile(const SetImage& set, uint32_t song, const std::string& library, xsflib::psf::Tags tags)
+std::vector<uint8_t> MiniFile(uint32_t song, const std::string& library, xsflib::psf::Tags tags)
 {
+    if (song > kMaxSong)
+    {
+        throw std::logic_error("a mini stores a song's number in 16 bits");
+    }
+
     Section section;
     section.entry = kRomBase;
-    section.address = set.stub.song_address;
-    xsflib::AppendLe32(section.data, song);
+    section.address = kSongAddress;
+    xsflib::AppendLe16(section.data, uint16_t(song));
     tags["_lib"] = library;
     return WriteGsf(section, tags);
 }

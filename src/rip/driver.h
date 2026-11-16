@@ -9,6 +9,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -40,7 +41,7 @@ struct GameTags
     std::string year;      // the date of the game's first release, YYYY-MM-DD
     std::string copyright; // "Developer, Publisher"
     std::string comment;
-    std::vector<std::string> titles; // by song; a song past the end or with an empty title is "Song N"
+    std::vector<std::string> titles; // by song; a song past the end or with an empty title is "Song N" or "Effect N"
     std::vector<int> order; // the songs in the order of the set: as a player first hears them, the unused ones last
     std::vector<SongCredit> credits;
 };
@@ -56,12 +57,21 @@ public:
     // What detection found, for --list.
     virtual const std::vector<std::string>& Log() const = 0;
 
-    // The songs that the stub can start by number, and whether number `song` is a song.
+    // The songs and sound effects that the stub can start by number, and whether number `song` is a song of the music.
     virtual int SongCount() const = 0;
     virtual bool HasSong(int song) const = 0;
 
+    // Whether number `song` is a sound effect that the stub can start. --effects adds these to a rip. The default is
+    // none.
+    virtual bool HasEffect(int song) const;
+
     // The plan of the stub. Its values with `song` set take the number that the mini stores.
     virtual StubPlan Plan() const = 0;
+
+    // The plan of a stub that starts the sound effects too. The default is Plan(), for a driver whose music plan starts
+    // them. A driver overrides it where its sound effects take another call. A rip of the music alone then keeps the
+    // music stub.
+    virtual StubPlan PlanWithEffects() const;
 
     // Sets up a run of the plan on the model, for a driver whose model needs more than the plan, such as a stand-in for
     // a routine that reads a DMA's position.
@@ -101,6 +111,17 @@ std::optional<xsflib::rip::Timing> TimingOfReport(const agblib::sequence_export:
 // highest. The console can take branches that the model doesn't, on state that the model has no part of, such as a
 // PSG channel that its length counter stopped. Routines outside the cartridge mark nothing.
 void MarkCodeSpan(std::vector<uint8_t>& reads, std::initializer_list<uint32_t> routines, uint32_t tail);
+
+// A run of bytes of the cartridge, by its address.
+struct RomSpan
+{
+    uint32_t address = 0;
+    uint32_t size = 0;
+};
+
+// Marks the whole of each span of `spans` of which `reads` marks any byte: a sample or a record that the console can
+// read more of than the model's runs did. `reads` grows to the end of a span that runs past it.
+void KeepWholeSpans(std::vector<uint8_t>& reads, std::span<const RomSpan> spans);
 
 // Finds the sound driver of the game in `rom`, which has to outlive the result. Returns null and sets `error` when the
 // game has none of the drivers that gsf rips, or when the driver's tables or routines can't be read.

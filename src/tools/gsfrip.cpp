@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-// gsfrip: rips a Game Boy Advance game's music into a GSF set: one .gsflib and one .minigsf for each song. The library
-// is the game's image with a stub that starts the song whose number the mini stores. The game's sound driver plays it.
+// gsfrip: rips a Game Boy Advance game's music into a GSF set: one .gsflib and one .minigsf for each song, and with
+// --effects for each sound effect. The library is the game's image with a stub that starts the song whose number the
+// mini stores. The game's sound driver plays it.
 //
 // usage: gsfrip [options] <image> [<image> ...]
 
@@ -48,7 +49,8 @@ constexpr char kUsage[] =
     "whose number the mini stores. Each song plays on a model of the console for its length analysis\n"
     "and for the coverage that trims the library to the bytes that the music reads. A game with a\n"
     "driver for each part, such as A Link to the Past & Four Swords, gets a folder for each part's set\n"
-    "inside that folder.\n"
+    "inside that folder. With --effects, the set has the game's sound effects too, after the music,\n"
+    "for the games whose sound effects gsfrip supports.\n"
     "\n"
     "Drivers: AlphaDream's, Brownie Brown's, ITE Media's, Logik State's, Nintendo R&D1's, Nintendo R&D2's,\n"
     "Quintet's and MP2K.\n"
@@ -57,6 +59,8 @@ constexpr char kUsage[] =
     "  -o, --output DIR     put the rips in DIR\n"
     "  --list               list the songs of each set, then stop\n"
     "  --only REGEX         rip only the songs whose name, such as \"Song 12\", or title matches\n"
+    "  --effects            rip the sound effects too\n"
+    "  --bgm                rip only the music (the default)\n"
     "  --no-length          skip the length analysis and omit length and fade tags\n"
     "  --no-trim            keep the whole image in the library\n"
     "  --margin S           seconds of play after a song's fade that the coverage still covers\n"
@@ -75,6 +79,7 @@ constexpr char kPlaylist[] = "!playlist.m3u";
 
 struct Options : xsflib::cli::RipOptions
 {
+    bool effects = false;
     bool trim = true;
     double margin = 10.0;
     std::string tagger;
@@ -82,7 +87,11 @@ struct Options : xsflib::cli::RipOptions
 
 int ParseOption(const std::string& option, const std::function<std::string()>& next, Options& o)
 {
-    if (option == "--no-trim")
+    if (option == "--effects")
+    {
+        o.effects = true;
+    }
+    else if (option == "--no-trim")
     {
         o.trim = false;
     }
@@ -115,12 +124,13 @@ int ParseOption(const std::string& option, const std::function<std::string()>& n
 struct Job
 {
     uint32_t song = 0;
+    bool effect = false;
     std::string label;
     std::optional<xsflib::rip::Timing> timing;
     std::optional<long long> last_sound_ms;
 };
 
-// The song's title from the game's tags, or "Song N".
+// The song's title from the game's tags, or "Song N", or "Effect N" for a sound effect.
 std::string SongTitle(const gsf::rip::Driver& driver, int song)
 {
     const gsf::rip::GameTags* tags = driver.Tags();
@@ -129,11 +139,11 @@ std::string SongTitle(const gsf::rip::Driver& driver, int song)
         return tags->titles[size_t(song)];
     }
 
-    return "Song " + std::to_string(song);
+    return (driver.HasEffect(song) ? "Effect " : "Song ") + std::to_string(song);
 }
 
 // The jobs: the songs that --only picks, by "Song N" or by title, in the order that the game's tags give. Songs that
-// the order leaves out follow, by number.
+// the order leaves out follow, by number. With --effects, the sound effects follow the music in the same order.
 std::vector<Job> SongJobs(const gsf::rip::Driver& driver, const Options& o)
 {
     std::vector<int> order;
@@ -150,21 +160,40 @@ std::vector<Job> SongJobs(const gsf::rip::Driver& driver, const Options& o)
         }
     }
 
+    const bool effects = o.effects && !o.bgm;
+    std::stable_partition(order.begin(), order.end(), [&](int song) { return driver.HasSong(song); });
     std::vector<Job> jobs;
     for (const int song : order)
     {
         const std::string label = SongTitle(driver, song);
         const std::string number = "Song " + std::to_string(song);
-        if (driver.HasSong(song) && (std::regex_search(number, o.only) || std::regex_search(label, o.only)))
+        const bool music = driver.HasSong(song);
+        const bool effect = !music && effects && driver.HasEffect(song);
+        if ((music || effect) && (std::regex_search(number, o.only) || std::regex_search(label, o.only)))
         {
             Job job;
             job.song = uint32_t(song);
+            job.effect = effect;
             job.label = label;
             jobs.push_back(std::move(job));
         }
     }
 
     return jobs;
+}
+
+// Whether the stub of `driver` can start any sound effect.
+bool HasAnyEffect(const gsf::rip::Driver& driver)
+{
+    for (int song = 0; song < driver.SongCount(); song++)
+    {
+        if (driver.HasEffect(song))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void ListSongs(const gsf::rip::Driver& driver)
@@ -176,7 +205,8 @@ void ListSongs(const gsf::rip::Driver& driver)
 
     for (int song = 0; song < driver.SongCount(); song++)
     {
-        std::printf("%4d  %s\n", song, driver.HasSong(song) ? SongTitle(driver, song).c_str() : "(empty)");
+        const bool listed = driver.HasSong(song) || driver.HasEffect(song);
+        std::printf("%4d  %s\n", song, listed ? SongTitle(driver, song).c_str() : "(empty)");
     }
     std::fflush(stdout);
 }
@@ -241,7 +271,7 @@ int WriteSet(const gsf::rip::SetImage& set, const std::vector<Job>& jobs, const 
         }
 
         if (!xsflib::rip::WriteFile(out_dir / xsflib::PathFromUtf8(name),
-                                    gsf::rip::MiniFile(set, job.song, *library_name, tags)))
+                                    gsf::rip::MiniFile(job.song, *library_name, tags)))
         {
             std::fprintf(stderr, "error: can't write %s\n", name.c_str());
             return 1;
@@ -272,7 +302,7 @@ int TrimSet(const std::string& input, const gsf::rip::Driver& driver, gsf::rip::
     const std::set<gsf::rip::TimedDma>& dmas = coverage.dmas;
     const uint64_t dma_starts = coverage.dma_starts;
     driver.CompleteReads(reads);
-    if (auto problem = gsf::rip::CheckStubRoom(set, reads))
+    if (auto problem = gsf::rip::CheckReplacedBytes(set, reads))
     {
         std::fprintf(stderr, "error: %s: %s\n", input.c_str(), problem->c_str());
         return 1;
@@ -306,11 +336,24 @@ int TrimSet(const std::string& input, const gsf::rip::Driver& driver, gsf::rip::
 int RipSet(const std::string& input, const agblib::agb::Rom& rom, const gsf::rip::Driver& driver, std::vector<Job> jobs,
            const Options& o, const fs::path& out_dir, xsflib::cli::FileNameRegistries& names)
 {
+    // A mini stores the song's number in 16 bits.
+    for (const Job& job : jobs)
+    {
+        if (job.song > gsf::rip::kMaxSong)
+        {
+            std::fprintf(stderr, "error: %s: song %u is above %u, the highest number a mini can store\n", input.c_str(),
+                         unsigned(job.song), unsigned(gsf::rip::kMaxSong));
+            return 1;
+        }
+    }
+
     std::string error;
     // Each song's length, then its run on the model for the coverage. Each run's map of the cartridge goes into the
     // union when the run ends: a map for each song would take songs times the image's size. A stub inside the image
-    // needs the coverage without the trim too, for the check that the music reads none of the bytes it replaces.
-    const gsf::rip::StubPlan plan = driver.Plan();
+    // needs the coverage without the trim too, for the check that the music reads none of the bytes it replaces. A set
+    // with sound effects takes the stub that starts them.
+    const bool effects = std::any_of(jobs.begin(), jobs.end(), [](const Job& job) { return job.effect; });
+    const gsf::rip::StubPlan plan = effects ? driver.PlanWithEffects() : driver.Plan();
     const bool cover = o.trim || gsf::rip::StubInImage(rom.Size(), plan);
     gsf::rip::Coverage coverage;
     std::mutex coverage_mutex;
@@ -347,7 +390,8 @@ int RipSet(const std::string& input, const agblib::agb::Rom& rom, const gsf::rip
     std::erase_if(jobs, silent);
     if (jobs.size() < before)
     {
-        std::fprintf(stderr, "%zu songs play no notes and are left out\n", before - jobs.size());
+        std::fprintf(stderr, "%zu %s play no notes and are left out\n", before - jobs.size(),
+                     effects ? "songs or sound effects" : "songs");
     }
 
     if (jobs.empty())
@@ -372,7 +416,7 @@ int RipSet(const std::string& input, const agblib::agb::Rom& rom, const gsf::rip
     if (!o.trim && cover)
     {
         driver.CompleteReads(coverage.reads);
-        if (auto problem = gsf::rip::CheckStubRoom(*set, coverage.reads))
+        if (auto problem = gsf::rip::CheckReplacedBytes(*set, coverage.reads))
         {
             std::fprintf(stderr, "error: %s: %s\n", input.c_str(), problem->c_str());
             return 1;
@@ -490,6 +534,11 @@ int RipInput(const std::string& input, const Options& o, xsflib::cli::FileNameRe
 
         jobs.push_back(SongJobs(driver, o));
         any = any || !jobs.back().empty();
+        if (o.effects && !o.bgm && !HasAnyEffect(driver))
+        {
+            std::fprintf(stderr, "%s%s: gsfrip can't rip this game's sound effects. The set has the music only.\n",
+                         input.c_str(), set.c_str());
+        }
     }
 
     if (o.list)

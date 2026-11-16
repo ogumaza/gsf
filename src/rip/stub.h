@@ -38,8 +38,15 @@ constexpr uint32_t kSystemStack = 0x03007F00;
 constexpr uint32_t kBiosIrqFlags = 0x03007FF8;
 constexpr uint32_t kIrqHandler = 0x03007FFC;
 
+// Where a mini stores the song's number, which the stub reads: the last two bytes of the cartridge's header, reserved
+// and outside the header's complement check (GBATEK, "Cartridge Header"). The address's high byte is the entry
+// point's, as the GSF description asks, whatever the image's size. The number has 16 bits.
+constexpr uint32_t kSongAddress = 0x080000BE;
+constexpr uint32_t kMaxSong = 0xFFFF;
+
 // A value that the stub passes to a routine or stores: a constant, plus the song's number when `song` is set. With a
-// table, the value is the table's word at the song's number instead. The stub keeps the table after the song's word.
+// table, the value is the table's word at the song's number instead. The stub keeps the tables after its literal
+// pool.
 struct Value
 {
     uint32_t constant = 0;
@@ -104,17 +111,16 @@ struct StubPlan
 // A stub assembled at its address.
 struct Stub
 {
-    uint32_t address = 0;      // the stub's first instruction, which the cartridge's first word branches to
-    uint32_t song_address = 0; // the word that holds the song's number: the mini's section
-    uint32_t loop = 0;         // the main loop's first instruction: its wait for the next interrupt
+    uint32_t address = 0; // the stub's first instruction, which the cartridge's first word branches to
+    uint32_t loop = 0;    // the main loop's first instruction: its wait for the next interrupt
     std::vector<uint8_t> code;
 };
 
 // The bytes of the stub for `plan`: the room to find for it.
 uint32_t StubSize(const StubPlan& plan);
 
-// Assembles `plan` at `address`, a multiple of 4. `song` is the number that the library starts.
-Stub BuildStub(const StubPlan& plan, uint32_t address, uint32_t song);
+// Assembles `plan` at `address`, a multiple of 4. The stub reads the song's number at kSongAddress.
+Stub BuildStub(const StubPlan& plan, uint32_t address);
 
 // The ARM branch that the cartridge's first word holds: from `from` to `to`.
 uint32_t BranchWord(uint32_t from, uint32_t to);

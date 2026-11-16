@@ -12,10 +12,13 @@
 // How far a voice reads into its sample depends on the order of interrupts. The model runs DMA 2's handler a whole
 // number of times before each frame, and the console spreads the transfers over the frame. The per-frame routine can
 // then mix 16 samples more or fewer in a frame, a voice can stop a frame later, and a voice that another note takes
-// over can play on. The library therefore keeps the whole of each sample that a run read part of. The handler of DMA
-// 2's interrupt can also take paths on the console that the model never runs, such as Rhythm Tengoku's code at
-// 0x0804917A to 0x08049240, just after the handler. The library therefore keeps the driver's code whole, from its
-// lowest routine that the stub calls to the last byte that a run read within kCodeTail bytes after its highest.
+// over can play on, and read fields of an instrument record or a sample header that the runs didn't. The library
+// therefore keeps the whole of each sample, instrument record and sample header that a run read part of. The
+// handler of DMA 2's interrupt can also take paths on the console that the model never runs, such as Rhythm Tengoku's
+// code at 0x0804917A to 0x08049240, just after the handler. The library therefore keeps the driver's code whole, from
+// its lowest routine that the stub calls to the last byte that a run read within kCodeTail bytes after its highest.
+
+#include "rip/drivers/rd1.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -48,63 +51,30 @@ constexpr uint32_t kTimerCycles = 0xFFFED9;
 constexpr uint32_t kSampleHeaderBytes = 24;
 constexpr uint32_t kSamplePointsAddress = 20;
 
-// A run of bytes of the cartridge.
-struct Span
+// The sizes of the instrument records by their kind, from agblib's layout of them.
+constexpr uint32_t kSampleRecordBytes = 32;
+constexpr uint32_t kPsgRecordBytes = 36;
+constexpr uint32_t kDrumsRecordBytes = 8;
+constexpr uint32_t kKeySplitRecordBytes = 12;
+
+uint32_t RecordBytes(rd1::InstrumentKind kind)
 {
-    uint32_t address = 0;
-    uint32_t size = 0;
-};
-
-// The points of each sample that an instrument of a bank plays: up to the longer of its length and its loop's end, one
-// byte a point.
-std::vector<Span> SamplePoints(const agblib::agb::Rom& rom, const rd1::DriverInfo& info)
-{
-    std::set<uint32_t> headers;
-    const auto add = [&](const rd1::InstrumentRecord& r)
+    switch (kind)
     {
-        if ((r.kind == rd1::InstrumentKind::kSample || r.kind == rd1::InstrumentKind::kFixed) &&
-            rom.Contains(r.sample, kSampleHeaderBytes))
-        {
-            headers.insert(r.sample);
-        }
-    };
-
-    for (int bank = 0; bank < info.bank_count; bank++)
-    {
-        for (int program = 0; program < 128; program++)
-        {
-            const uint32_t address = rd1::ProgramInstrument(rom, info, bank, program);
-            if (!address || !rom.Contains(address))
-            {
-                continue;
-            }
-
-            const rd1::InstrumentRecord record = rd1::ReadInstrument(rom, address);
-            if (record.kind != rd1::InstrumentKind::kDrums && record.kind != rd1::InstrumentKind::kKeySplit)
-            {
-                add(record);
-                continue;
-            }
-
-            for (int key = 0; key < 128; key++)
-            {
-                add(rd1::PlayedInstrument(rom, record, key));
-            }
-        }
+    case rd1::InstrumentKind::kSample:
+    case rd1::InstrumentKind::kFixed:
+        return kSampleRecordBytes;
+    case rd1::InstrumentKind::kPsg:
+        return kPsgRecordBytes;
+    case rd1::InstrumentKind::kDrums:
+        return kDrumsRecordBytes;
+    case rd1::InstrumentKind::kKeySplit:
+        return kKeySplitRecordBytes;
+    case rd1::InstrumentKind::kNone:
+        break;
     }
 
-    std::vector<Span> points;
-    for (const uint32_t header : headers)
-    {
-        const uint32_t count = std::min(std::max(rom.U32(header), rom.U32(header + 16)), rd1::kMaxSamplePoints);
-        const uint32_t address = rom.U32(header + kSamplePointsAddress);
-        if (count && rom.Contains(address, count))
-        {
-            points.push_back({address, count});
-        }
-    }
-
-    return points;
+    return 0;
 }
 
 // How far past the start of the highest routine that the stub calls the driver's code can go: the init and its
@@ -115,7 +85,7 @@ class Rd1Driver : public Driver
 {
 public:
     Rd1Driver(const agblib::agb::Rom& rom, rd1::DriverInfo info, rd1::GameRoutines routines)
-        : rom_(rom), info_(std::move(info)), routines_(std::move(routines)), samples_(SamplePoints(rom_, info_))
+        : rom_(rom), info_(std::move(info)), routines_(std::move(routines)), whole_(Rd1WholeSpans(rom_, info_))
     {
     }
 
@@ -169,29 +139,7 @@ public:
     {
         const rd1::GameRoutines& r = routines_;
         MarkCodeSpan(reads, {r.init, r.echo, r.play, r.start, r.frame, r.transfer}, kCodeTail);
-        for (const Span& span : samples_)
-        {
-            const size_t first = span.address - agblib::agb::kRomBase;
-            const size_t last = first + span.size;
-            if (first >= reads.size())
-            {
-                continue;
-            }
-
-            const auto begin = reads.begin() + std::ptrdiff_t(first);
-            const auto end = reads.begin() + std::ptrdiff_t(std::min(last, reads.size()));
-            if (std::none_of(begin, end, [](uint8_t mark) { return mark != 0; }))
-            {
-                continue;
-            }
-
-            if (reads.size() < last)
-            {
-                reads.resize(last);
-            }
-
-            std::fill(reads.begin() + std::ptrdiff_t(first), reads.begin() + std::ptrdiff_t(last), uint8_t{1});
-        }
+        KeepWholeSpans(reads, whole_);
     }
 
     std::optional<xsflib::rip::Timing> SongTiming(int song) const override
@@ -204,10 +152,73 @@ private:
     const agblib::agb::Rom& rom_;
     rd1::DriverInfo info_;
     rd1::GameRoutines routines_;
-    std::vector<Span> samples_;
+    std::vector<RomSpan> whole_;
 };
 
 } // namespace
+
+std::vector<RomSpan> Rd1WholeSpans(const agblib::agb::Rom& rom, const agblib::rd1::DriverInfo& info)
+{
+    std::set<std::pair<uint32_t, uint32_t>> records;
+    std::set<uint32_t> headers;
+    const auto add = [&](const rd1::InstrumentRecord& r)
+    {
+        if (r.kind == rd1::InstrumentKind::kNone)
+        {
+            return;
+        }
+
+        records.insert({r.address, RecordBytes(r.kind)});
+        if ((r.kind == rd1::InstrumentKind::kSample || r.kind == rd1::InstrumentKind::kFixed) &&
+            rom.Contains(r.sample, kSampleHeaderBytes))
+        {
+            headers.insert(r.sample);
+        }
+    };
+
+    for (int bank = 0; bank < info.bank_count; bank++)
+    {
+        for (int program = 0; program < 128; program++)
+        {
+            const uint32_t address = rd1::ProgramInstrument(rom, info, bank, program);
+            if (!address || !rom.Contains(address))
+            {
+                continue;
+            }
+
+            const rd1::InstrumentRecord record = rd1::ReadInstrument(rom, address);
+            add(record);
+            if (record.kind != rd1::InstrumentKind::kDrums && record.kind != rd1::InstrumentKind::kKeySplit)
+            {
+                continue;
+            }
+
+            for (int key = 0; key < 128; key++)
+            {
+                add(rd1::PlayedInstrument(rom, record, key));
+            }
+        }
+    }
+
+    std::vector<RomSpan> spans;
+    for (const auto& [address, size] : records)
+    {
+        spans.push_back({address, size});
+    }
+
+    for (const uint32_t header : headers)
+    {
+        spans.push_back({header, kSampleHeaderBytes});
+        const uint32_t count = std::min(std::max(rom.U32(header), rom.U32(header + 16)), rd1::kMaxSamplePoints);
+        const uint32_t address = rom.U32(header + kSamplePointsAddress);
+        if (count && rom.Contains(address, count))
+        {
+            spans.push_back({address, count});
+        }
+    }
+
+    return spans;
+}
 
 std::unique_ptr<Driver> FindRd1(const agblib::agb::Rom& rom, std::string& error)
 {

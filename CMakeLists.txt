@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 
 cmake_minimum_required(VERSION 3.20)
-project(gsf VERSION 0.3.0 LANGUAGES C CXX)
+project(gsf VERSION 0.4.0 LANGUAGES C CXX)
 
 # xsflib is a library for players and rippers of the PSF family. It's a submodule. Its XsflibProject.cmake sets what a
 # project built on it starts with: C++20, a release build by default, the static C runtime, the options that keep the
@@ -47,7 +47,9 @@ add_library(gsf_rip STATIC
     src/rip/drivers/mp2k.cpp
     src/rip/drivers/quintet.cpp
     src/rip/drivers/rd1.cpp
+    src/rip/drivers/rd1.h
     src/rip/drivers/rd2.cpp
+    src/rip/drivers/rd2.h
     src/rip/model.cpp
     src/rip/model.h
     src/rip/rip.cpp
@@ -81,6 +83,9 @@ if (GSF_TESTS)
     xsflib_add_project_test(gsf logikstate gsf_rip)
     xsflib_add_project_test(gsf ite gsf_rip)
     xsflib_add_project_test(gsf brownie gsf_rip)
+    xsflib_add_project_test(gsf rd1 gsf_rip)
+    xsflib_add_project_test(gsf rd2 gsf_rip)
+    xsflib_add_project_test(gsf quintet gsf_rip)
 
     # gsfrip reports the version it was built as.
     string(REPLACE "." "\\." version_pattern ${gsf_VERSION})
