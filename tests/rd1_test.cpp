@@ -15,13 +15,14 @@
 #include "xsflib/testing/check.h"
 
 #include "rip/driver.h"
+#include "rom_spans.h"
 
 namespace
 {
 
+using agblib::agb::kRomBase;
 using gsf::rip::RomSpan;
-
-constexpr uint32_t kRomBase = 0x08000000;
+using gsf::testing::HasSpan;
 
 // The places of the bank's tables, records and sample in the cartridge.
 constexpr uint32_t kBankTable = 0x100;
@@ -60,13 +61,8 @@ std::vector<uint8_t> MakeImage()
 
     word(kHeader, kPointCount);
     word(kHeader + 20, kRomBase + kPoints);
-    return image;
-}
 
-bool Has(const std::vector<RomSpan>& spans, uint32_t offset, uint32_t size)
-{
-    return std::any_of(spans.begin(), spans.end(),
-                       [&](const RomSpan& span) { return span.address == kRomBase + offset && span.size == size; });
+    return image;
 }
 
 void TestWholeSpans()
@@ -80,13 +76,13 @@ void TestWholeSpans()
 
     const std::vector<RomSpan> spans = gsf::rip::Rd1WholeSpans(rom, info);
     XSFLIB_CHECK(spans.size() == 5);
-    XSFLIB_CHECK(Has(spans, kSampleRecord, 32));
-    XSFLIB_CHECK(Has(spans, kDrumRecord, 8));
-    XSFLIB_CHECK(Has(spans, kPsgRecord, 36));
-    XSFLIB_CHECK(Has(spans, kHeader, 24));
-    XSFLIB_CHECK(Has(spans, kPoints, kPointCount));
+    XSFLIB_CHECK(HasSpan(spans, kRomBase + kSampleRecord, 32));
+    XSFLIB_CHECK(HasSpan(spans, kRomBase + kDrumRecord, 8));
+    XSFLIB_CHECK(HasSpan(spans, kRomBase + kPsgRecord, 36));
+    XSFLIB_CHECK(HasSpan(spans, kRomBase + kHeader, 24));
+    XSFLIB_CHECK(HasSpan(spans, kRomBase + kPoints, kPointCount));
 
-    // A run that read the record's start but not its last field, as Rhythm Tengoku's song 584: the trim keeps the
+    // A run that read the record's start but not its last field, like Rhythm Tengoku's song 584: the trim keeps the
     // record whole, and nothing that no run read any of.
     std::vector<uint8_t> reads(0x800);
     std::fill_n(reads.begin() + kSampleRecord, 0x10, uint8_t{1});

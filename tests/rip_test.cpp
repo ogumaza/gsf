@@ -8,21 +8,25 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <map>
+#include <cstdlib>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "agblib/agb/files.h"
 #include "agblib/agb/gba.h"
 #include "agblib/agb/rom.h"
+#include "agblib/agb/system.h"
+#include "agblib/testing/agb_cart.h"
+#include "seqlib/file_name.h"
 #include "xsflib/bytes.h"
 #include "xsflib/rip/length.h"
 #include "xsflib/testing/check.h"
-#include "xsflib/testing/sets.h"
 
 #include "gsf/gsf_file.h"
+#include "rip/cartridge.h"
 #include "rip/driver.h"
 #include "rip/model.h"
 #include "rip/stub.h"
@@ -30,18 +34,21 @@
 namespace
 {
 
+using agblib::agb::kRomBase;
+using agblib::agb::Utf8;
+using agblib::testing::agb_files::TempPath;
 using gsf::rip::Operation;
 using gsf::rip::SetImage;
 using gsf::rip::StubPlan;
 
-constexpr uint32_t kRomBase = 0x08000000;
-
+// A plan with one call at the start, one in the vertical blank's handler and one each frame.
 StubPlan SmallPlan()
 {
     StubPlan plan;
     plan.start = {Operation::Call(0x08000201, {{1}, {0, true}})};
     plan.handlers = {{gsf::rip::kIrqVblank, {Operation::Call(0x08000301)}}};
     plan.frame = {Operation::Call(0x08000401)};
+
     return plan;
 }
 
@@ -70,8 +77,8 @@ void TestPlaceStubAfterImage()
 
 void TestMiniOfLargeImage()
 {
-    // An image of 16 MiB puts the stub at 0x09000000. The mini's address still starts with the high byte of its start,
-    // 0x08, as the GSF description asks.
+    // An image of 16 MiB puts the stub at 0x09000000. The GSF description asks that the mini's address start with the
+    // high byte of its start, 0x08. It still does.
     const std::vector<uint8_t> rom(0x01000000, 0x66);
     std::string error;
     const std::optional<SetImage> set = gsf::rip::PlaceStub(rom, SmallPlan(), 7, error);
@@ -81,10 +88,7 @@ void TestMiniOfLargeImage()
 
     xsflib::psf::PsfFile psf;
     XSFLIB_REQUIRE(!xsflib::psf::ParsePsf(gsf::rip::MiniFile(7, "game.gsflib", {}), psf));
-    gsf::Section section;
-    XSFLIB_REQUIRE(!gsf::ParseSection(psf.program, section));
-    XSFLIB_CHECK(section.address >> 24 == section.entry >> 24);
-    XSFLIB_CHECK(section.address == 0x080000BE);
+    XSFLIB_CHECK(psf.program == gsf::SectionProgram({.entry = kRomBase, .address = 0x080000BE, .data = {7, 0}}));
 
     // A mini can't store a song above 16 bits.
     bool threw = false;
@@ -96,17 +100,19 @@ void TestMiniOfLargeImage()
     {
         threw = true;
     }
+
     XSFLIB_CHECK(threw);
 }
 
 void TestPlaceStubInPadding()
 {
     // A full 32 MiB image puts the stub in the padding at its end. One with too little padding has no room.
-    std::vector<uint8_t> rom(gsf::kMaxImageSize, 0xFF);
+    std::vector<uint8_t> rom(agblib::agb::kMaxRomSize, 0xFF);
     for (size_t i = 0; i < 0x1FFF001; i++)
     {
         rom[i] = 0x11;
     }
+
     std::string error;
 
     const std::optional<SetImage> set = gsf::rip::PlaceStub(rom, SmallPlan(), 0, error);
@@ -118,7 +124,7 @@ void TestPlaceStubInPadding()
 
     // An image that ends in data puts the stub in its longest run of 0x00 or 0xFF. A longer run of another value isn't
     // padding.
-    std::vector<uint8_t> data(gsf::kMaxImageSize, 0x11);
+    std::vector<uint8_t> data(agblib::agb::kMaxRomSize, 0x11);
     std::fill(data.begin() + 0x100001, data.begin() + 0x101000, 0x00);
     std::fill(data.begin() + 0x1000000, data.begin() + 0x1100000, 0x22);
     std::fill(data.begin() + 0x1800000, data.begin() + 0x1800800, 0xFF);
@@ -134,13 +140,13 @@ void TestPlaceStubInPadding()
     XSFLIB_REQUIRE(set.has_value());
     XSFLIB_CHECK(set->stub.address == kRomBase + 0x1FFF004);
     XSFLIB_CHECK(gsf::rip::StubInImage(rom.size(), SmallPlan()));
-    XSFLIB_CHECK(set->image.size() == gsf::kMaxImageSize);
+    XSFLIB_CHECK(set->image.size() == agblib::agb::kMaxRomSize);
     XSFLIB_CHECK(set->stub.code.size() == gsf::rip::StubSize(SmallPlan()));
     XSFLIB_REQUIRE(placed.has_value());
     XSFLIB_CHECK(placed->stub.code.size() == gsf::rip::StubSize(shared));
     XSFLIB_REQUIRE(inside.has_value());
     XSFLIB_CHECK(inside->stub.address == kRomBase + 0x100004);
-    XSFLIB_CHECK(inside->image.size() == gsf::kMaxImageSize && inside->image[0x1FFFFFF] == 0xFF);
+    XSFLIB_CHECK(inside->image.size() == agblib::agb::kMaxRomSize && inside->image[0x1FFFFFF] == 0xFF);
     XSFLIB_CHECK(!none && error.find("no room") != std::string::npos);
 }
 
@@ -185,14 +191,14 @@ void TestTrim()
 
 void TestCheckReplacedBytes()
 {
-    std::vector<uint8_t> rom(gsf::kMaxImageSize, 0xFF);
+    std::vector<uint8_t> rom(agblib::agb::kMaxRomSize, 0xFF);
     rom[0x1000] = 0x11;
     std::string error;
     const std::optional<SetImage> set = gsf::rip::PlaceStub(rom, SmallPlan(), 0, error);
     XSFLIB_REQUIRE(set.has_value());
 
     // A run that read the padding where the stub went.
-    std::vector<uint8_t> reads(gsf::kMaxImageSize);
+    std::vector<uint8_t> reads(agblib::agb::kMaxRomSize);
     reads[set->stub.address - kRomBase + 8] = 1;
     XSFLIB_CHECK(gsf::rip::CheckReplacedBytes(*set, reads).has_value());
 
@@ -206,7 +212,7 @@ void TestCheckReplacedBytes()
     header[0xBF] = 1;
     XSFLIB_CHECK(gsf::rip::CheckReplacedBytes(*set, header).has_value());
 
-    // A run that read the first word, which branches to the stub.
+    // A run that read the first word, the branch to the stub.
     std::vector<uint8_t> first(0x10);
     first[3] = 1;
     XSFLIB_CHECK(gsf::rip::CheckReplacedBytes(*set, first).has_value());
@@ -224,28 +230,25 @@ void TestSetFiles()
     xsflib::psf::Tags tags;
     tags["title"] = "Song 9";
 
-    const std::map<std::string, std::vector<uint8_t>> files = {
-        {"game.gsflib", gsf::rip::LibraryFile(*set, {})},
-        {"0009 Song 9.minigsf", gsf::rip::MiniFile(9, "game.gsflib", tags)},
-    };
+    const std::vector<uint8_t> mini = gsf::rip::MiniFile(9, "game.gsflib", tags);
+    XSFLIB_REQUIRE(agblib::agb::WriteFile(Utf8(TempPath("game.gsflib")), gsf::rip::LibraryFile(*set, {}), error));
+    XSFLIB_REQUIRE(agblib::agb::WriteFile(Utf8(TempPath("0009 Song 9.minigsf")), mini, error));
 
-    // The mini's section: the cartridge's start, and the song's number at 0x080000BE.
+    // The mini's section: the cartridge's start, and the song's number at 0x080000BE. Its tags name the library.
     xsflib::psf::PsfFile psf;
-    XSFLIB_REQUIRE(!xsflib::psf::ParsePsf(files.at("0009 Song 9.minigsf"), psf));
-    gsf::Section section;
-    XSFLIB_REQUIRE(!gsf::ParseSection(psf.program, section));
-    XSFLIB_CHECK(section.entry == kRomBase && section.address == 0x080000BE);
-    XSFLIB_CHECK(section.data == (std::vector<uint8_t>{9, 0}));
-    gsf::LoadedSet loaded;
-    const auto problem = gsf::LoadSet("0009 Song 9.minigsf", xsflib::testing::MapReader(files), loaded);
+    XSFLIB_REQUIRE(!xsflib::psf::ParsePsf(mini, psf));
+    XSFLIB_CHECK(psf.program == gsf::SectionProgram({.entry = kRomBase, .address = 0x080000BE, .data = {9, 0}}));
+    XSFLIB_CHECK(psf.tags.at("_lib") == "game.gsflib" && psf.tags.at("title") == "Song 9");
+
+    agblib::agb::Rom set_rom;
+    const bool loaded = set_rom.Load(Utf8(TempPath("0009 Song 9.minigsf")), error);
 
     // The set gives the library's image with the mini's song number.
-    XSFLIB_REQUIRE(!problem);
-    XSFLIB_CHECK(loaded.entry == kRomBase);
-    XSFLIB_REQUIRE(loaded.image.size() == set->image.size());
-    XSFLIB_CHECK(loaded.image[0xBE] == 9 && loaded.image[0xBF] == 0);
-    XSFLIB_CHECK(loaded.tags.at("_lib") == "game.gsflib" && loaded.tags.at("title") == "Song 9");
-    std::vector<uint8_t> library_image = loaded.image;
+    XSFLIB_REQUIRE(loaded);
+    XSFLIB_CHECK(set_rom.GsfEntry() == kRomBase);
+    std::vector<uint8_t> library_image = gsf::rip::CartridgeImage(set_rom);
+    XSFLIB_REQUIRE(library_image.size() == set->image.size());
+    XSFLIB_CHECK(library_image[0xBE] == 9 && library_image[0xBF] == 0);
     xsflib::StoreLe16(&library_image[gsf::rip::kSongAddress - kRomBase], 0);
     XSFLIB_CHECK(library_image == set->image);
 }
@@ -318,8 +321,8 @@ void TestTimedDmaStarts()
 {
     // DMA 1 for FIFO A, with repeat, and DMA 3 at the vertical blank, without. A write to the control of DMA 1 while it
     // runs starts nothing, and the new source stays unread. DMA 1 starts again once the code clears its enable bit. DMA
-    // 3 may have ended its one transfer before any write, so each write that sets its enable bit counts as a start,
-    // twice in one frame too.
+    // 3 may have ended its one transfer before any write. Each write that sets its enable bit counts as a start, twice
+    // in one frame too.
     std::vector<uint8_t> image(0x400, 0x44);
     agblib::agb::Rom rom;
     rom.Assign(image);
@@ -350,38 +353,94 @@ void TestTimedDmaStarts()
     {
         started.emplace_back(dma.channel, dma.source - kRomBase);
     }
+
     XSFLIB_CHECK(started ==
                  (std::vector<std::pair<int, uint32_t>>{{1, 0x100}, {1, 0x200}, {3, 0x300}, {3, 0x320}, {3, 0x340}}));
 }
 
-void TestTagsOfTiming()
+void TestTaggedTiming()
 {
-    // A loop: its length to the nearest second and a fade of 10 s. An end: the end to the millisecond, without the
-    // tail, and the tail of 1 s as the fade.
+    // A song's last sound, where a profile gives it, replaces the end of its commands. A loop keeps its length.
     xsflib::rip::Timing loop;
     loop.length_ms = 100'004;
-    loop.fade_ms = 10'000;
+    loop.fade_ms = 7'000;
     xsflib::rip::Timing end;
     end.length_ms = 2'934;
 
-    const gsf::rip::LengthTags loop_tags = gsf::rip::TagsOfTiming(loop);
-    const gsf::rip::LengthTags end_tags = gsf::rip::TagsOfTiming(end);
+    XSFLIB_CHECK(gsf::rip::TaggedTiming(end, 1'808).length_ms == 1'808);
+    XSFLIB_CHECK(gsf::rip::TaggedTiming(end, std::nullopt).length_ms == 2'934);
+    XSFLIB_CHECK(gsf::rip::TaggedTiming(loop, 1'808).length_ms == 100'004);
+}
 
-    XSFLIB_CHECK(loop_tags.length == "1:40" && loop_tags.fade == "10");
-    XSFLIB_CHECK(end_tags.length == "0:01.934" && end_tags.fade == "1");
-    loop.length_ms = 59'500;
-    XSFLIB_CHECK(gsf::rip::TagsOfTiming(loop).length == "1:00");
+void TestTimingOfReport()
+{
+    // The report gives a loop's start, the end of its first pass and the end of two passes, in seconds. The timing
+    // takes the last pass, in whole frames, and starts it two passes before the length.
+    const double frame_ms = 1000.0 / agblib::agb::kFrameRate;
+    const auto frames = [](double seconds)
+    {
+        return uint64_t(std::llround(seconds * agblib::agb::kFrameRate));
+    };
+    const auto loop_report = [](double start, double first_end, double seconds)
+    {
+        agblib::sequence_export::agb::SongReport report;
+        report.ok = true;
+        report.loop_start = start;
+        report.loop_end = first_end;
+        report.seconds = seconds;
+        return report;
+    };
 
-    // A song's last sound, where a profile gives it, replaces the end of its commands. A loop keeps its length.
-    const gsf::rip::LengthTags sound = gsf::rip::TagsOfTiming(end, 1'808);
-    XSFLIB_CHECK(sound.length == "0:01.808" && sound.fade == "1");
-    XSFLIB_CHECK(gsf::rip::TagsOfTiming(loop, 1'808).length == "1:00");
+    // A loop from 2 s with two passes of 3 s.
+    const std::optional<xsflib::rip::Timing> loop = gsf::rip::TimingOfReport(loop_report(2.0, 5.0, 8.0));
+    const xsflib::rip::Timing expected = xsflib::rip::PassesAt(frames(8.0), frames(8.0) - frames(5.0), frame_ms, 7'000);
+    XSFLIB_REQUIRE(loop && loop->loop);
+    XSFLIB_CHECK(loop->fade_ms == 7'000 && loop->length_ms == expected.length_ms && loop->loop == expected.loop);
+    XSFLIB_CHECK(loop->loop->start_ms == loop->length_ms - 2 * loop->loop->length_ms);
+
+    // A second pass longer than the first: the pass is the second, 3.5 s, and starts 7 s before the length.
+    const std::optional<xsflib::rip::Timing> longer = gsf::rip::TimingOfReport(loop_report(2.0, 5.0, 8.5));
+    XSFLIB_REQUIRE(longer && longer->loop);
+    XSFLIB_CHECK(longer->loop->length_ms == xsflib::rip::EndAt(frames(8.5) - frames(5.0), frame_ms).length_ms);
+    XSFLIB_CHECK(std::llabs(longer->loop->length_ms - 3'500) <= 17);
+    XSFLIB_CHECK(longer->loop->start_ms == longer->length_ms - 2 * longer->loop->length_ms);
+
+    // A loop with no intro whose first pass is 2 frames shorter than the second: its two passes would start 33 ms
+    // before the analysis, under the 50 ms of kShortFirstPassMs. The pass starts at 0. Four frames, 67 ms, give no
+    // pass.
+    const double frame_s = 1.0 / agblib::agb::kFrameRate;
+    const std::optional<xsflib::rip::Timing> early =
+        gsf::rip::TimingOfReport(loop_report(0.0, 178 * frame_s, 358 * frame_s));
+    XSFLIB_REQUIRE(early && early->loop);
+    XSFLIB_CHECK(early->loop->start_ms == 0);
+    XSFLIB_CHECK(early->loop->length_ms == xsflib::rip::EndAt(180, frame_ms).length_ms);
+    XSFLIB_CHECK(early->length_ms == xsflib::rip::EndAt(358, frame_ms).length_ms);
+    const std::optional<xsflib::rip::Timing> too_early =
+        gsf::rip::TimingOfReport(loop_report(0.0, 176 * frame_s, 356 * frame_s));
+    XSFLIB_REQUIRE(too_early);
+    XSFLIB_CHECK(!too_early->loop && too_early->fade_ms == 7'000);
+
+    // A first pass far shorter than the second gives no pass.
+    const std::optional<xsflib::rip::Timing> uneven = gsf::rip::TimingOfReport(loop_report(2.0, 5.0, 11.0));
+    XSFLIB_REQUIRE(uneven);
+    XSFLIB_CHECK(!uneven->loop && uneven->fade_ms == 7'000);
+
+    // A song that ends ends at its end, with no tail.
+    agblib::sequence_export::agb::SongReport end_report;
+    end_report.ok = true;
+    end_report.seconds = 2.5;
+    const std::optional<xsflib::rip::Timing> end = gsf::rip::TimingOfReport(end_report);
+    XSFLIB_REQUIRE(end);
+    XSFLIB_CHECK(end->fade_ms == 0 && !end->loop &&
+                 end->length_ms == xsflib::rip::EndAt(frames(2.5), frame_ms).length_ms);
 }
 
 void TestNames()
 {
-    XSFLIB_CHECK(gsf::rip::FileTitle("Title Screen, Circus Act 1") == "Title Screen, Circus Act 1");
-    XSFLIB_CHECK(gsf::rip::FileTitle("A/B: C?.") == "A_B_ C__");
+    // The names of the minis and of the sets' folders keep a title's spaces and punctuation. Only the characters that a
+    // file system refuses become '_', and a final dot or space.
+    XSFLIB_CHECK(seqlib::SafeFileName("Title Screen, Circus Act 1") == "Title Screen, Circus Act 1");
+    XSFLIB_CHECK(seqlib::SafeFileName("A/B: C?.") == "A_B_ C__");
 
     // "AGB-", the game code and its region, from made-up game codes. A last letter that names no region adds none.
     XSFLIB_CHECK(gsf::rip::ProductCode("ZZZP") == "AGB-ZZZP-EUR");
@@ -426,7 +485,8 @@ int main()
     TestSetFiles();
     TestTimedDmas();
     TestTimedDmaStarts();
-    TestTagsOfTiming();
+    TestTaggedTiming();
+    TestTimingOfReport();
     TestNames();
     TestMarkCodeSpan();
 

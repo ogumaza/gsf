@@ -1,23 +1,24 @@
 // SPDX-License-Identifier: MIT
 
-// MP2K, the driver of Nintendo's SDK for the GBA. agblib's detection finds the song table, and FindGameRoutines() the
-// routines from their shapes: the init, m4aSongNumStart, SoundMain and m4aSoundVSync.
+// MP2K, the driver of Nintendo's SDK for the GBA. The agblib detection finds the song table. FindGameRoutines() finds
+// the routines from their shapes: the init, m4aSongNumStart, SoundMain and m4aSoundVSync.
 //
 // The game calls the init, and starts a song with m4aSongNumStart. The handler of the vertical blank calls
-// m4aSoundVSync, which restarts the sound DMA at the buffer's end, and then SoundMain, which runs the players and the
-// mixer for the frame.
+// m4aSoundVSync, then SoundMain. m4aSoundVSync restarts the sound DMA at the end of the buffer. SoundMain runs the
+// players and the mixer for the frame.
 //
-// The game's code can set the driver's mode again after the init (DriverInfo::game_modes). Some games also set up a
-// song before they start it, with another number of DirectSound channels or a reverb (song_settings, and the channels
-// of SongChannels()). One gives the player a volume after the start (SongVolume()). The stub makes the same calls of
-// m4aSoundMode, m4aMPlayImmInit and m4aMPlayVolumeControl. A table by song gives each call its values.
+// The code of the game can set the mode of the driver again after the init (DriverInfo::game_modes). Some games also
+// set up a song before they start it, with another number of DirectSound channels or a reverb (song_settings, and the
+// channels of SongChannels()). One game gives the player a volume after the start (SongVolume()). The stub makes the
+// same calls of m4aSoundMode, m4aMPlayImmInit and m4aMPlayVolumeControl. A table by song gives each call its values.
 //
-// In Camelot's version of the driver, the boot code copies a mixer to IWRAM. A sound module in the game's code wraps
-// the driver: an init, a routine that plays a sound by number, and a per-frame routine that moves the music's volume
-// and tempo toward the module's targets. The handler of the vertical blank calls m4aSoundVSync. Each frame, the main
-// loop copies the DMA counter for SoundMain and calls the per-frame routine, SoundMain and the mixer's output stage. A
-// profile of each game gives the module's routines.
+// In Camelot's version of the driver, the boot code copies a mixer to IWRAM. A sound module in the code of the game
+// wraps the driver: an init, a routine that plays a sound by number, and a per-frame routine that moves the volume and
+// the tempo of the music toward the targets of the module. The handler of the vertical blank calls m4aSoundVSync. Each
+// frame, the main loop copies the DMA counter for SoundMain, and calls the per-frame routine, SoundMain and the output
+// stage of the mixer. A profile of each game gives the routines of the module.
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -43,15 +44,12 @@ namespace
 
 namespace mp2k = agblib::mp2k;
 
-// How far past the highest routine that the stub calls the driver's code can reach: the SDK's library places CgbSound
-// and the commands' routines after m4aSongNumStart.
+// How far the code of the driver can reach past the highest routine that the stub calls: the library of the SDK places
+// CgbSound and the routines of the commands after m4aSongNumStart.
 constexpr uint32_t kCodeTail = 0x2000;
 
 // The tracks that a call of m4aMPlayVolumeControl changes: all of them.
 constexpr uint32_t kAllTracks = 0xFFFF;
-
-// The bytes of an entry of the music player table: the player's MusicPlayerInfo, its tracks and their count.
-constexpr uint32_t kPlayerEntrySize = 12;
 
 // The calls of m4aSongNumStart, m4aMPlayImmInit and m4aMPlayVolumeControl in a routine of the game that starts a song
 // and sets the volume of its player. agblib doesn't find the two volume routines. A row matches only where its first
@@ -65,30 +63,30 @@ struct VolumeCalls
 };
 
 constexpr VolumeCalls kVolumeCalls[] = {
-    // Steel Empire: the routine at 0x08005C54 starts a song, then gives its player the volume of the song's halfword
-    // in the table at 0x080460FC for all tracks (0xFFFF).
+    // Steel Empire: the routine at 0x08005C54 starts a song. It then gives the player of the song, for all tracks
+    // (0xFFFF), the volume in the halfword of the song in the table at 0x080460FC.
     {"BKTP", 0x08005CC4, 0x08005CDE, 0x08005CF8},
 };
 
-// The routines of Camelot's sound module in a game, where the module's table of exports holds them: a veneer of
-// ldr r4, =routine; bx r4 for each, 8 bytes apart.
+// The routines of Camelot's sound module in a game, where the table of exports of the module contains them: a veneer of
+// `ldr r4, =routine; bx r4` for each, 8 bytes apart.
 struct CamelotModule
 {
     std::string_view game_code;
     uint32_t exports;
-    uint32_t init;  // the module's init: export 1, which calls m4aSoundInit
+    uint32_t init;  // the init of the module: export 1, a call of m4aSoundInit
     uint32_t play;  // the routine that plays a sound by number: export 2
     uint32_t frame; // the per-frame routine: export 17
 };
 
 constexpr CamelotModule kCamelotModules[] = {
     // Golden Sun: The Lost Age: the boot code calls export 1 at 0x0801322A, and the game plays its music and sounds
-    // through export 2 (1,032 calls). The main loop's sound routine at 0x080134B0 calls export 17, then SoundMain
+    // through export 2 (1,032 calls). The sound routine of the main loop at 0x080134B0 calls export 17, then SoundMain
     // (0x08000630) and the output stage.
     {"AGFE", 0x081C0000, 0x081C0C1C, 0x081C0CB0, 0x081C0E30},
 };
 
-// The module of the game in `rom`, where its table of exports gives the profile's routines, or nothing.
+// The module of the game in `rom`, where its table of exports gives the routines of the profile, or nothing.
 std::optional<CamelotModule> FindCamelotModule(const agblib::agb::Rom& rom)
 {
     constexpr uint32_t kVeneer = 0x47204C00; // ldr r4, [pc, #0]; bx r4
@@ -109,8 +107,8 @@ std::optional<CamelotModule> FindCamelotModule(const agblib::agb::Rom& rom)
     return std::nullopt;
 }
 
-// What the game's code gives each song: a mode for m4aSoundMode before the start (0 for no call), and the player and
-// the volume after it (a volume of kFullPlayerVolume for no call).
+// What the code of the game gives each song: a mode for m4aSoundMode before the start (0 for no call), and the player
+// and the volume after it (a volume of kFullPlayerVolume for no call).
 struct SongSetup
 {
     std::vector<uint32_t> modes;
@@ -142,7 +140,7 @@ SongSetup SetupOfSongs(const agblib::agb::Rom& rom, const mp2k::DriverInfo& info
         }
 
         const uint32_t entry = info.song_table + 8 * uint32_t(song);
-        const uint32_t player = info.player_table + kPlayerEntrySize * rom.U16(entry + 4);
+        const uint32_t player = info.player_table + mp2k::kPlayerEntrySize * rom.U16(entry + 4);
         const int volume = mp2k::SongVolume(info, song);
         setup.modes.push_back(mode);
         setup.players.push_back(rom.Contains(player, 4) ? rom.U32(player) : 0);
@@ -266,17 +264,17 @@ public:
         return plan;
     }
 
-    // SoundMain stops mixing early when the vertical count shows that the frame has run late. The model's count
-    // stays at the start of the vertical blank, as on the console when the handler runs on time.
+    // SoundMain stops mixing early when the vertical count shows that the frame has run late. The count of the model
+    // stays at the start of the vertical blank. The console has that count when the handler runs on time.
     void PrepareModel(ModelRun& run) const override
     {
         run.Gba().HoldVcount(agblib::agb::kVblankLine);
     }
 
-    // CgbSound turns a PSG channel's note off when NR52 shows that the channel's length counter has stopped it. The
-    // model has no length counters, so its runs never take that path, and the library keeps the driver's code whole.
-    // Camelot's SoundMain and m4aSoundVSync are far from the module and the rest of the driver. Each part gets a
-    // separate span. The module's span starts at its table of exports.
+    // CgbSound turns the note of a PSG channel off when NR52 shows that the length counter of the channel has stopped
+    // it. The model has no length counters. Its runs never take that path, and the library therefore keeps the code of
+    // the driver whole. In Camelot's version, SoundMain and m4aSoundVSync are far from the module and the rest of the
+    // driver. Each part gets a separate span. The span of the module starts at its table of exports.
     void CompleteReads(std::vector<uint8_t>& reads) const override
     {
         if (camelot_)
@@ -298,13 +296,14 @@ public:
     }
 
 private:
-    // The play routine starts song n of the song table for sound number n, through one of three paths: the music's,
-    // the sound effects' (a free player among 4 to 7 for player 7) and a stop of the music before the start (0x50 to
-    // 0x63). The numbers that it takes as commands (0x4E, 0x186 and 0x18B in Golden Sun: The Lost Age) are empty songs.
-    // The game copies the DMA counter less one, or the period when the counter is 1, which puts the mixer a frame
-    // further ahead. The stub copies the counter as it is, as agblib's GameDriver does: the FIFOs come out the same at
-    // another offset. The game calls the output stage only when SoundMain returns 0. In mGBA, SoundMain returned 0 in
-    // each of 1,800 frames of Golden Sun's song 5, and the stub calls the output stage every frame.
+    // The play routine starts song n of the song table for sound number n, through one of three paths: the path of the
+    // music, the path of the sound effects (a free player among 4 to 7 for player 7) and a stop of the music before the
+    // start (0x50 to 0x63). The numbers that it takes as commands (0x4E, 0x186 and 0x18B in Golden Sun: The Lost Age)
+    // are empty songs. The game copies the DMA counter less one, or the period when the counter is 1. That puts the
+    // mixer a frame further ahead. The stub copies the counter unchanged, as the GameDriver of agblib does: the FIFOs
+    // come out the same at another offset. The game calls the output stage only when SoundMain returns 0. In mGBA,
+    // SoundMain returned 0 in each of 1,800 frames of song 5 of Golden Sun. The stub calls the output stage every
+    // frame.
     StubPlan CamelotPlan() const
     {
         StubPlan plan;
@@ -352,6 +351,7 @@ std::unique_ptr<Driver> FindMp2k(const agblib::agb::Rom& rom, std::string& error
 
     info.log.push_back("routines: init " + agblib::agb::Hex(routines.init) + ", m4aSoundVSync " +
                        agblib::agb::Hex(routines.vsync) + ", SoundMain " + agblib::agb::Hex(routines.main));
+
     std::optional<CamelotModule> camelot;
     uint32_t sound_info = 0;
     if (routines.copy_size != 0)
@@ -363,7 +363,7 @@ std::unique_ptr<Driver> FindMp2k(const agblib::agb::Rom& rom, std::string& error
             return nullptr;
         }
 
-        // The SoundInfo's address, which the init stores, gives the DMA counter that the main loop copies.
+        // The init stores the address of the SoundInfo. That address gives the DMA counter that the main loop copies.
         try
         {
             sound_info = mp2k::GameDriver(rom, info, routines).SoundInfo();
@@ -378,7 +378,7 @@ std::unique_ptr<Driver> FindMp2k(const agblib::agb::Rom& rom, std::string& error
                            agblib::agb::Hex(camelot->play) + ", frame " + agblib::agb::Hex(camelot->frame));
     }
 
-    // Camelot's plan plays each song through the module, which makes the game's set-up.
+    // The plan of Camelot's version plays each song through the module. The module makes the set-up of the game.
     SongSetup setup = camelot ? SongSetup{} : SetupOfSongs(rom, info);
     if (setup.any_mode && !routines.sound_mode)
     {
@@ -389,8 +389,8 @@ std::unique_ptr<Driver> FindMp2k(const agblib::agb::Rom& rom, std::string& error
     if (!info.game_modes.empty() && !routines.sound_mode && !camelot)
     {
         info.log.push_back(
-            "the game's code sets the driver's mode after the init, and m4aSoundMode wasn't found: the "
-            "set keeps the init's mode");
+            "the game's code sets the driver's mode after the init, and m4aSoundMode wasn't found: the set keeps the "
+            "init's mode");
     }
 
     const std::optional<VolumeRoutines> volume = FindVolumeRoutines(rom, routines);

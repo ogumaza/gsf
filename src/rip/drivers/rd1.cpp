@@ -1,26 +1,25 @@
 // SPDX-License-Identifier: MIT
 
-// Nintendo R&D1's driver, as WarioWare, Inc.: Mega Microgame$! and Rhythm Tengoku play it. agblib finds the routines
-// from the code: the init, the routine that sets the echo, the play routine, the per-frame routine and the handler of
-// DMA 2's interrupt.
+// Nintendo R&D1's driver, as WarioWare, Inc.: Mega Microgame$! and Rhythm Tengoku play it. agblib finds the routines in
+// the code: the init, the routine that sets the echo, the play routine, the start of a song on a player that the play
+// routine calls, the per-frame routine and the handler of the DMA 2 interrupt.
 //
-// The game calls the init, then sets the echo with four settings, and starts a song with the play routine and the
-// song's entry in the song table. The mixer keeps the bytes for the FIFOs in a ring. Each time FIFO B asks for bytes,
-// DMA 2 moves 16 of them, and the handler of its interrupt moves the ring's read place on. The per-frame routine runs
-// once a frame and fills the ring up to a lead past the read place.
+// The game calls the init, then sets the echo with four settings. It starts a song with the play routine and the entry
+// of the song in the song table. The mixer keeps the bytes for the FIFOs in a ring. Each time FIFO B requests bytes,
+// DMA 2 moves 16 of them, and the handler of its interrupt moves the read place of the ring on. The per-frame routine
+// runs once a frame. It fills the ring up to a lead past the read place.
 //
-// How far a voice reads into its sample depends on the order of interrupts. The model runs DMA 2's handler a whole
-// number of times before each frame, and the console spreads the transfers over the frame. The per-frame routine can
-// then mix 16 samples more or fewer in a frame, a voice can stop a frame later, and a voice that another note takes
-// over can play on, and read fields of an instrument record or a sample header that the runs didn't. The library
-// therefore keeps the whole of each sample, instrument record and sample header that a run read part of. The
-// handler of DMA 2's interrupt can also take paths on the console that the model never runs, such as Rhythm Tengoku's
-// code at 0x0804917A to 0x08049240, just after the handler. The library therefore keeps the driver's code whole, from
-// its lowest routine that the stub calls to the last byte that a run read within kCodeTail bytes after its highest.
+// How far a voice reads into its sample depends on the order of interrupts. The model runs the DMA 2 handler a whole
+// number of times before each frame. The console spreads the transfers over the frame. The per-frame routine can then
+// mix 16 samples more or fewer in a frame, and a voice can stop a frame later. A voice that another note takes over can
+// play on, and read fields of an instrument record or a sample header that the runs didn't read. The library therefore
+// keeps the whole of each sample, instrument record and sample header that a run read part of. On the console, the
+// handler of the DMA 2 interrupt can also take paths that the model never runs, such as the code of Rhythm Tengoku at
+// 0x0804917A to 0x08049240, just after the handler. The library therefore keeps the code of the driver whole: from the
+// lowest of the routines that agblib finds to the last byte that a run read within kCodeTail bytes after the highest.
 
 #include "rip/drivers/rd1.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -44,41 +43,10 @@ namespace
 
 namespace rd1 = agblib::rd1;
 
-// The timer that plays the FIFOs counts this many cycles over the mixer's rate between two samples.
+// Between two samples, the timer that plays the FIFOs counts this many cycles over the mixer rate.
 constexpr uint32_t kTimerCycles = 0xFFFED9;
 
-// The bytes of a sample header that the driver reads, and the place of the address of the points in it.
-constexpr uint32_t kSampleHeaderBytes = 24;
-constexpr uint32_t kSamplePointsAddress = 20;
-
-// The sizes of the instrument records by their kind, from agblib's layout of them.
-constexpr uint32_t kSampleRecordBytes = 32;
-constexpr uint32_t kPsgRecordBytes = 36;
-constexpr uint32_t kDrumsRecordBytes = 8;
-constexpr uint32_t kKeySplitRecordBytes = 12;
-
-uint32_t RecordBytes(rd1::InstrumentKind kind)
-{
-    switch (kind)
-    {
-    case rd1::InstrumentKind::kSample:
-    case rd1::InstrumentKind::kFixed:
-        return kSampleRecordBytes;
-    case rd1::InstrumentKind::kPsg:
-        return kPsgRecordBytes;
-    case rd1::InstrumentKind::kDrums:
-        return kDrumsRecordBytes;
-    case rd1::InstrumentKind::kKeySplit:
-        return kKeySplitRecordBytes;
-    case rd1::InstrumentKind::kNone:
-        break;
-    }
-
-    return 0;
-}
-
-// How far past the start of the highest routine that the stub calls the driver's code can go: the init and its
-// literals.
+// How far past the start of the highest routine of the driver its code can go: the init and its literals.
 constexpr uint32_t kCodeTail = 0x1000;
 
 class Rd1Driver : public Driver
@@ -113,11 +81,6 @@ public:
     StubPlan Plan() const override
     {
         const rd1::GameRoutines& r = routines_;
-        std::vector<Value> echo;
-        for (const uint32_t setting : r.echo_settings)
-        {
-            echo.push_back({setting});
-        }
 
         // The ring loses a byte a sample, and DMA 2 moves 16 bytes a transfer.
         const uint32_t period = kTimerCycles / uint32_t(info_.mix_rate);
@@ -126,7 +89,7 @@ public:
         StubPlan plan;
         plan.start = {
             Operation::Call(r.init | 1),
-            Operation::Call(r.echo | 1, echo),
+            Operation::Call(r.echo | 1, Constants(r.echo_settings)),
             Operation::Call(r.play | 1, {{0, true}}),
         };
         plan.interrupts = kIrqVblank | kIrqDma2;
@@ -168,9 +131,9 @@ std::vector<RomSpan> Rd1WholeSpans(const agblib::agb::Rom& rom, const agblib::rd
             return;
         }
 
-        records.insert({r.address, RecordBytes(r.kind)});
+        records.insert({r.address, rd1::RecordBytes(r.kind)});
         if ((r.kind == rd1::InstrumentKind::kSample || r.kind == rd1::InstrumentKind::kFixed) &&
-            rom.Contains(r.sample, kSampleHeaderBytes))
+            rom.Contains(r.sample, rd1::kSampleHeaderBytes))
         {
             headers.insert(r.sample);
         }
@@ -200,20 +163,14 @@ std::vector<RomSpan> Rd1WholeSpans(const agblib::agb::Rom& rom, const agblib::rd
         }
     }
 
-    std::vector<RomSpan> spans;
-    for (const auto& [address, size] : records)
-    {
-        spans.push_back({address, size});
-    }
-
+    std::vector<RomSpan> spans = SpansOf(records);
     for (const uint32_t header : headers)
     {
-        spans.push_back({header, kSampleHeaderBytes});
-        const uint32_t count = std::min(std::max(rom.U32(header), rom.U32(header + 16)), rd1::kMaxSamplePoints);
-        const uint32_t address = rom.U32(header + kSamplePointsAddress);
-        if (count && rom.Contains(address, count))
+        spans.push_back({header, rd1::kSampleHeaderBytes});
+        const rd1::SamplePoints points = rd1::PointsOfSample(rom, header);
+        if (points.count && rom.Contains(points.address, points.count))
         {
-            spans.push_back({address, count});
+            spans.push_back({points.address, points.count});
         }
     }
 

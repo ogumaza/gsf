@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: MIT
 
-// Brownie Brown's driver, as Sword of Mana and Magical Vacation play it. agblib finds the driver's tables and its
-// per-frame routine, reads the sounds' channels and works out each song's loop or end. A profile of each release gives
-// the routines that the game calls. The game's code gives them.
+// Brownie Brown's driver, as Sword of Mana and Magical Vacation play it. agblib finds the tables and the per-frame
+// routine of the driver, reads the channels of the sounds and works out the loop or the end of each song. A profile of
+// each release gives the routines that the game calls. Their addresses come from the code of the game.
 //
 // The game calls its sound init, and requests a sound by its number. The driver starts the sound at the end of the next
-// frame. The game's handler of the vertical blank calls the per-frame routine. The sounds that use the music's PSG
-// channels are the music, and each gets a mini. The others are sound effects. With --effects, they get minis in a game
-// whose profile has them: the stub requests a sound effect as it requests the music.
+// frame. The handler of the vertical blank in the game calls the per-frame routine. The sounds that use the PSG
+// channels of the music are the music, and each gets a mini. The others are sound effects. With --effects, they get
+// minis in a game whose profile has them: the stub requests a sound effect in the same way as the music.
 //
-// In the Sword of Mana revision, the init sets up Timer 0 and the FIFOs' DMAs. The game copies the mixer to IWRAM.
-// Each time the FIFOs have played 16 points, the DMAs' interrupts run the mixer once: it acknowledges both. The stub
-// runs it for DMA 1's interrupt. In the Magical Vacation revision, each FIFO plays one sample at the rate of its timer.
-// The interrupt of DMA 1 or DMA 2 gives FIFO A or FIFO B the sample's next 4 points. The stub's handler of the vertical
-// blank runs the per-frame routine with the interrupts off, as the games' handlers do.
+// In the Sword of Mana revision, the init sets up Timer 0 and the DMAs of the FIFOs. The game copies the mixer to
+// IWRAM. Each time the FIFOs have played 16 points, the DMA interrupts run the mixer once: the mixer acknowledges both.
+// The stub runs it for the DMA 1 interrupt. In the Magical Vacation revision, each FIFO plays one sample at the rate of
+// its timer. The interrupt of DMA 1 or DMA 2 gives FIFO A or FIFO B the next 4 points of the sample. The handler of the
+// vertical blank in the stub runs the per-frame routine with the interrupts off. The handlers of the games do the same.
 //
 // How far a sample plays in a frame depends on the order of interrupts. In the Magical Vacation revision it depends on
-// the notes' rates too. The model runs neither. The library therefore keeps the whole of each sample that a run read
-// part of. It also keeps the driver's code whole, from its lowest routine in the cartridge that the stub calls to the
-// last byte that a run read within kCodeTail bytes after its highest.
+// the rates of the notes too. The model runs neither. The library therefore keeps the whole of each sample that a run
+// read part of. It also keeps the code of the driver whole: from the lowest routine in the cartridge that the stub
+// calls to the last byte that a run read within kCodeTail bytes after the highest.
 
 #include <algorithm>
 #include <cstddef>
@@ -46,8 +46,8 @@ namespace
 
 namespace brownie = agblib::brownie;
 
-// A release's routines and the state that the game sets before its first sound. A routine is ARM code unless bit 0 of
-// its address is set.
+// The routines of a release and the state that the game sets before its first sound. A routine is ARM code unless bit 0
+// of its address is set.
 struct BrownieProfile
 {
     std::string_view code = {};
@@ -55,23 +55,23 @@ struct BrownieProfile
     uint32_t frame = 0;              // the driver's per-frame routine, as detection finds it
     uint32_t init = 0;               // the game's sound init
     uint32_t request = 0;            // the driver's request of a sound: r0 = the sound
-    std::vector<uint32_t> fifo_irqs; // the routines of DMA 1's interrupt and, where it has one, DMA 2's
+    std::vector<uint32_t> fifo_irqs; // the routines of the DMA 1 interrupt and, in one game, the DMA 2 interrupt
     uint16_t waitcnt = 0;            // WAITCNT as the game sets it
     bool effects = false;            // whether gsf rips the sound effects
 };
 
-// Sword of Mana, US. The game's sound init (0x080A1560) calls the driver's init. It then copies the mixer from
-// 0x080A0B74 and 0x080A1040 to 0x03003150 and 0x03003750 with DMA 3. The game requests a sound through 0x080A153C.
-// That routine drops sounds 0 to 0x2F, the music, while the byte at 0x02000000 is set. Otherwise it calls the driver's
-// request, as the stub does. The game's interrupts run the mixer at 0x03003150 about 17 times a frame. Its handler of
-// the vertical blank (0x08001038) calls the per-frame routine through 0x080A15A0.
+// Sword of Mana, US. The sound init of the game (0x080A1560) calls the init of the driver. It then copies the mixer
+// from 0x080A0B74 and 0x080A1040 to 0x03003150 and 0x03003750 with DMA 3. The game requests a sound through 0x080A153C.
+// That routine drops sounds 0 to 0x2F, the music, while the byte at 0x02000000 is set. Otherwise it calls the request
+// of the driver. The stub calls that request directly. The interrupts of the game run the mixer at 0x03003150 about 17
+// times a frame. The handler of the vertical blank (0x08001038) calls the per-frame routine through 0x080A15A0.
 //
-// Magical Vacation, Japan. The game's sound init is 0x0805B574. The game calls it in frames 2 and 614 after the boot.
-// It requests a sound through 0x0805B564, and that routine calls the driver's request. The routines of DMA 1's and
-// DMA 2's interrupts go through 0x0805B58C and 0x0805B598.
+// Magical Vacation, Japan. The sound init of the game is 0x0805B574. The game calls it in frames 2 and 614 after the
+// boot. It requests a sound through 0x0805B564, and that routine calls the request of the driver. The routines of the
+// DMA 1 and DMA 2 interrupts go through 0x0805B58C and 0x0805B598.
 //
-// Both games set WAITCNT to 0x45B7. Sword of Mana's sound effects play on the driver's channels for sound effects,
-// through the same request.
+// Both games set WAITCNT to 0x45B7. The sound effects of Sword of Mana play on the channels of the driver for sound
+// effects, through the same request.
 const std::vector<BrownieProfile>& Profiles()
 {
     static const std::vector<BrownieProfile> kProfiles = {
@@ -96,34 +96,25 @@ const std::vector<BrownieProfile>& Profiles()
     return kProfiles;
 }
 
-constexpr uint32_t kWaitCnt = 0x04000204;
-
-// Timer 0's control, Timer 1's control a timer further on, and the bit that runs a timer.
-constexpr uint32_t kTimerControl = 0x04000102;
+// The control of Timer 0, the control of Timer 1 one timer further on, and the bit that runs a timer.
+constexpr uint32_t kTimerControl = agblib::agb::kRegTimer0Reload + 2;
 constexpr uint32_t kTimerStride = 4;
 constexpr uint32_t kTimerOn = 0x80;
-constexpr uint32_t kVersionByte = 0x080000BC;
 
 // The points that the mixer makes for each FIFO at a time, and that each interrupt gives a FIFO in the Magical Vacation
 // revision.
 constexpr uint32_t kMixerPoints = 16;
 constexpr uint32_t kInterruptPoints = 4;
 
-// How far past the start of the highest routine that the stub calls the driver's code and tables go: the data reader,
-// the commands' routines and their table.
+// How far the code and the tables of the driver go past the start of the highest routine that the stub calls: the data
+// reader, the routines of the commands and their table.
 constexpr uint32_t kCodeTail = 0x1000;
 
-// A sample's record: its start, end and loop, three words. Each record that the driver's tables name lies just before
-// its points.
-constexpr uint32_t kSampleRecordBytes = 12;
-
-// The sample sets of the Sword of Mana revision each name 12 records.
-constexpr int kSetSamples = 12;
-
-// The points of the sample whose record is at `record`, or nothing for an address that holds no sample's record.
+// The points of the sample whose record is at `record`, or nothing where `record` isn't the record of a sample. Each
+// record that the tables of the driver name is just before its points.
 std::optional<RomSpan> SampleAt(const agblib::agb::Rom& rom, uint32_t record)
 {
-    if (!rom.Contains(record, kSampleRecordBytes))
+    if (!rom.Contains(record, brownie::kSampleRecordBytes))
     {
         return std::nullopt;
     }
@@ -131,7 +122,8 @@ std::optional<RomSpan> SampleAt(const agblib::agb::Rom& rom, uint32_t record)
     const uint32_t start = rom.U32(record);
     const uint32_t end = rom.U32(record + 4);
     const uint32_t loop = rom.U32(record + 8);
-    if (start != record + kSampleRecordBytes || loop < start || end < loop || !rom.Contains(start, end - start))
+    if (start != record + brownie::kSampleRecordBytes || loop < start || end < loop ||
+        !rom.Contains(start, end - start))
     {
         return std::nullopt;
     }
@@ -152,11 +144,11 @@ std::vector<RomSpan> SamplePoints(const agblib::agb::Rom& rom, const brownie::Dr
         {
             records.push_back(rom.U32(entry));
         }
-        else if (const uint32_t set = rom.U32(entry); rom.Contains(set, 4 * kSetSamples))
+        else if (const uint32_t set = rom.U32(entry); rom.Contains(set, 4 * brownie::kSetSamples))
         {
-            for (int i = 0; i < kSetSamples; i++)
+            for (uint32_t i = 0; i < brownie::kSetSamples; i++)
             {
-                records.push_back(rom.U32(set + 4 * uint32_t(i)));
+                records.push_back(rom.U32(set + 4 * i));
             }
         }
 
@@ -180,13 +172,7 @@ std::vector<RomSpan> SamplePoints(const agblib::agb::Rom& rom, const brownie::Dr
         }
     }
 
-    std::vector<RomSpan> points;
-    for (const auto& [address, size] : found)
-    {
-        points.push_back({address, size});
-    }
-
-    return points;
+    return SpansOf(found);
 }
 
 class BrownieDriver : public Driver
@@ -214,15 +200,16 @@ public:
         return info_.song_count;
     }
 
-    // The music: a sound that uses one of the music's PSG channels. Sound 0 can't play: in the driver's queue, 0 means
-    // no request.
+    // The music: a sound that uses one of the PSG channels of the music. Sound 0 can't play: in the queue of the
+    // driver, 0 means no request.
     bool HasSong(int song) const override
     {
         const std::optional<bool> music = IsMusic(song);
         return music && *music;
     }
 
-    // A sound effect: a sound with channels, none of them the music's, in a game whose profile has sound effects.
+    // A sound effect: a sound with channels, none of them a channel of the music, in a game whose profile has sound
+    // effects.
     bool HasEffect(int song) const override
     {
         const std::optional<bool> music = profile_.effects ? IsMusic(song) : std::nullopt;
@@ -233,14 +220,15 @@ public:
     {
         StubPlan plan;
         plan.start = {
-            Operation::Store(kWaitCnt, {profile_.waitcnt}, 2),
+            Operation::Store(agblib::agb::kRegWaitCnt, {profile_.waitcnt}, 2),
             Operation::Call(profile_.init),
             Operation::Call(profile_.request, {{0, true}}),
         };
 
         // In the Sword of Mana revision, the mixer runs once for each 16 points of the FIFOs, at the rate of Timer 0.
-        // In the Magical Vacation revision, each FIFO's interrupt comes once for each 4 points at the note's rate. The
-        // model runs it at the rate of Timer 0's setting.
+        // In the Magical Vacation revision, the interrupt of each FIFO comes once for each 4 points at the rate of the
+        // note. The model runs it at the fixed rate of DriverInfo::point_cycles. Detection reads no timer setting in
+        // this revision and leaves that at its default of 1024 cycles (16,384 Hz).
         const uint32_t points = info_.revision == brownie::Revision::kSwordOfMana ? kMixerPoints : kInterruptPoints;
         const double per_frame = double(agblib::agb::kFrameCycles) / double(info_.point_cycles * points);
         constexpr uint16_t kFifoIrqs[] = {kIrqDma1, kIrqDma2};
@@ -255,9 +243,9 @@ public:
         return plan;
     }
 
-    // In the Magical Vacation revision, a FIFO's interrupt comes only while the FIFO's timer runs. The model runs its
-    // routine as often as Timer 0's setting gives, so it skips the routine while the timer is off. Past the end of a
-    // sample that doesn't loop, the routine would otherwise read on through the cartridge.
+    // In the Magical Vacation revision, the interrupt of a FIFO comes only while the timer of the FIFO runs. The model
+    // runs the routine at a fixed rate (Plan()). The run therefore skips the routine while the timer is off. Past the
+    // end of a sample that doesn't loop, the routine would otherwise read on through the cartridge.
     void PrepareModel(ModelRun& run) const override
     {
         if (info_.revision != brownie::Revision::kMagicalVacation)
@@ -281,7 +269,7 @@ public:
 
     void CompleteReads(std::vector<uint8_t>& reads) const override
     {
-        // The routines in the cartridge. Sword of Mana's mixer runs from IWRAM.
+        // The routines in the cartridge. The mixer of Sword of Mana runs from IWRAM.
         std::vector<uint32_t> routines = {profile_.frame, profile_.init, profile_.request};
         std::copy_if(profile_.fifo_irqs.begin(), profile_.fifo_irqs.end(), std::back_inserter(routines),
                      [](uint32_t routine) { return routine >= agblib::agb::kRomBase; });
@@ -298,8 +286,8 @@ public:
     }
 
 private:
-    // Whether sound `song` is music: whether it uses one of the music's PSG channels. Nothing for a sound that can't
-    // play or has no channels.
+    // Whether sound `song` is music: whether it uses one of the PSG channels of the music. Nothing for a sound that
+    // can't play or has no channels.
     std::optional<bool> IsMusic(int song) const
     {
         std::vector<brownie::SongChannel> channels;
@@ -318,19 +306,6 @@ private:
     std::vector<RomSpan> samples_;
 };
 
-const BrownieProfile* FindBrownieProfile(std::string_view code, uint8_t version, uint32_t frame)
-{
-    for (const BrownieProfile& profile : Profiles())
-    {
-        if (profile.code == code && profile.version == version && profile.frame == frame)
-        {
-            return &profile;
-        }
-    }
-
-    return nullptr;
-}
-
 } // namespace
 
 std::unique_ptr<Driver> FindBrownie(const agblib::agb::Rom& rom, std::string& error)
@@ -342,13 +317,12 @@ std::unique_ptr<Driver> FindBrownie(const agblib::agb::Rom& rom, std::string& er
     }
 
     const std::string code = rom.GameCode();
-    const uint8_t version = rom.U8(kVersionByte);
-    const BrownieProfile* profile = FindBrownieProfile(code, version, info.frame_routine);
+    const uint8_t version = rom.Version();
+    const BrownieProfile* profile = FindProfile(Profiles(), code, version, &BrownieProfile::frame, info.frame_routine);
     if (!profile)
     {
-        error = "Brownie Brown's driver: the game " + code + " (version " + std::to_string(version) +
-                ") with its per-frame routine at " + agblib::agb::Hex(info.frame_routine) +
-                " is in no profile that gsf has, so the routines that it calls are unknown";
+        error = NoProfileError("Brownie Brown's driver",
+                               GameWithRoutine(code, version, "per-frame routine", info.frame_routine));
         return nullptr;
     }
 

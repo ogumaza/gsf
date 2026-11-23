@@ -1,25 +1,27 @@
 // SPDX-License-Identifier: MIT
 
-// Nintendo R&D2's driver, as Super Mario Advance 2, 3 and 4 and A Link to the Past play it.
-// agblib's detection finds the sequences and the settings that the game's play-music routine gives each of them. A
-// profile for each game gives the routines that the game calls: its sound init, the driver's request and the call that
-// hands the requests to the next frame, the driver's VBlank routine and its per-frame routine, and the game's
-// play-music routine where it has one. Each game's code gives them.
+// Nintendo R&D2's driver, as Super Mario Advance 2, 3 and 4 and A Link to the Past play it. The agblib detection finds
+// the sequences, and the settings that the play-music routine of the game gives each of them. A profile for each game
+// gives the routines that the game calls: its sound init, the request of the driver and the call that hands the
+// requests to the next frame, the VBlank routine and the per-frame routine of the driver, and the play-music routine of
+// the game where it has one. Their addresses come from the code of each game.
 //
-// The game calls its sound init. A sequence that the game plays by a music number starts through the game's
-// play-music routine, which also sets the voices, the volume and the muted tracks that the game plays it with. In Super
-// Mario Advance 2, the routine for the tracks that play only with Yoshi follows, with the player on foot. Any other
-// sequence starts through the driver's request on the music player. The stub then hands the request to the driver. The
-// handler of the vertical blank runs the VBlank routine, which restarts timer 0 and the output DMAs, and the main loop
-// runs the per-frame routine.
+// The game calls its sound init. A sequence that the game plays by a music number starts through the play-music routine
+// of the game. That routine also sets the voices, the volume and the muted tracks that the game plays the sequence
+// with. In Super Mario Advance 2, the routine for the tracks that play only with Yoshi follows, with the player on
+// foot. Any other sequence starts through the request of the driver on the music player. The stub then hands the
+// request to the driver. The handler of the vertical blank runs the VBlank routine. That routine restarts timer 0 and
+// the output DMAs. The main loop runs the per-frame routine.
 //
-// gsf rips the sequences, each as the first music number that plays it gives it. With --effects, a game whose profile
-// gives its request of a sound effect gets a mini for each sound effect too: a track of one of the sound effects'
-// sequences. The stub requests it on the player that the game's tables give it, and hands the request to the driver.
+// gsf rips each sequence as the first music number that plays it gives it. With --effects, a game whose profile gives
+// its request of a sound effect also gets a mini for each sound effect: a track of one of the sequences of sound
+// effects. The stub requests the effect on the player that the tables of the game give it, and hands the request to the
+// driver.
 
 #include "rip/drivers/rd2.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -41,8 +43,8 @@ namespace
 
 namespace rd2 = agblib::rd2;
 
-// The routines of a game's driver, all Thumb code, and the player that the game plays its music on. `play_music` and
-// `yoshi_mute` are 0 in a game without them. `effect_request` is 0 in a game whose sound effects gsf doesn't rip.
+// The routines of the driver in a game, all Thumb code, and the player that the game plays its music on. `play_music`
+// and `yoshi_mute` are 0 in a game without them. `effect_request` is 0 in a game whose sound effects gsf doesn't rip.
 struct Profile
 {
     const char* code = "";
@@ -54,24 +56,24 @@ struct Profile
     uint32_t music_player = 0x12;
     uint32_t play_music = 0;
     uint32_t yoshi_mute = 0;
-    // The driver's request of a sound effect: r0 = the player, r1 = the sequence, r2 = the track.
-    uint32_t effect_request = 0;
+    uint32_t effect_request = 0; // the driver's request of a sound effect: r0 = player, r1 = sequence, r2 = track
     std::span<const Rd2EffectTable> effect_tables = {};
 };
 
-// A Link to the Past's tables of sound effects. The game's sound effect routine (0x0812A324) takes a sound from the
-// first. The third byte of its word is the player, 0 to 14. The routine skips the request while a sound of higher
-// priority plays on the player. With a position, it then sets the player's pan and volume (0x0812C8DC, 0x0812C884);
-// without one, the pan is the middle (0x40) and the volume full (0x80). The routine at 0x0812A4F8 takes a sound from
-// the second, and requests it on player 0x10 or 0x11, whichever of its two slots is free.
+// The tables of sound effects of A Link to the Past. The sound effect routine of the game (0x0812A324) takes a sound
+// from the first table. The third byte of the word of the sound is the player, 0 to 14. The routine skips the request
+// while a sound of higher priority plays on the player. With a position, it then sets the pan and the volume of the
+// player (0x0812C8DC, 0x0812C884). Without one, the pan is the middle (0x40) and the volume full (0x80). The routine at
+// 0x0812A4F8 takes a sound from the second table, and requests it on player 0x10 or 0x11: whichever of its two slots is
+// free.
 constexpr Rd2EffectTable kAzleEffectTables[] = {{0x08198C94, 125}, {0x08198E88, 8, 0x10}};
 
 // A Link to the Past (AZLE) sets its R&D2 driver up only once the player has chosen a file and the game. In mGBA, the
 // game then calls its sound init (0x08129E60) and its play-music routine (0x0812A044). The routine looks the music
 // number up in a table of sequences (0x08198C50), requests the sequence on music player 0x12 and records the music. It
-// sets no voices, volume or muted tracks, so the stub makes the request itself for every sequence. The game requests
-// its sound effects only from the first sound effects' sequence, through the driver's request at 0x0812C73C. The only
-// routine that requests the second sequence's (0x0812A5F8) has no caller.
+// sets no voices, volume or muted tracks. The stub therefore makes the request itself for every sequence. The game
+// requests its sound effects only from the first sequence of sound effects, through the request of the driver at
+// 0x0812C73C. The only routine that requests the effects of the second sequence (0x0812A5F8) has no caller.
 constexpr Profile kProfiles[] = {
     {"AA2E", 0x0809B258, 0x0809D840, 0x0809D82C, 0x0809BA74, 0x0809BA80, 0x13, 0x0809B348, 0x0809B3CC},
     {"A3AE", 0x0812C214, 0x0812EEBC, 0x0812EEA8, 0x0812CF50, 0x0812CF5C, 0x13, 0x0812C3B4},
@@ -82,11 +84,11 @@ constexpr Profile kProfiles[] = {
 // The player of a sound effect that the game's tables don't name.
 constexpr int kDefaultEffectPlayer = 0;
 
-// A bit of an entry of a game's table of sound effects: the game plays its track or one of the next two in turn.
+// A bit of an entry of a table of sound effects: the game plays the track of the entry or one of the next two in turn.
 constexpr uint32_t kTurnBit = 0x08000000;
 
-// Whether a conversion's report warns of a sample that can't be read: one whose points lie outside the ROM. The driver
-// plays such a sample from whatever the address holds on the console.
+// Whether the report of a conversion warns of a sample that can't be read: one whose points are outside the ROM. On the
+// console, the driver plays such a sample from whatever the address contains.
 bool PlaysUnreadableSample(const agblib::sequence_export::agb::SongReport& report)
 {
     for (const std::string& warning : report.warnings)
@@ -134,7 +136,7 @@ public:
     }
 
     // A sound effect of a game with a request of sound effects in its profile, unless it plays a sample that can't be
-    // read: the set can't play what the console's memory holds there.
+    // read: the set can't play what the memory of the console contains there.
     bool HasEffect(int song) const override
     {
         const int effect = song - int(info_.sequence_addresses.size());
@@ -214,8 +216,8 @@ private:
         return plan;
     }
 
-    // The player that the game's tables give a sound effect, or -1 for a sound effect that they don't name. Only the
-    // first sound effects' sequence has tables.
+    // The player that the tables of the game give a sound effect, or -1 for a sound effect that they don't name. Only
+    // the first sequence of sound effects has tables.
     int TablePlayer(const rd2::Effect& effect) const
     {
         if (effect.sequence == 0 && size_t(effect.track) < players_.size())
@@ -226,7 +228,7 @@ private:
         return -1;
     }
 
-    // The player that the stub requests a sound effect on: the one that the game's tables give, or else
+    // The player that the stub requests a sound effect on: the player that the tables of the game give, or else
     // kDefaultEffectPlayer.
     int EffectPlayer(const rd2::Effect& effect) const
     {
@@ -246,13 +248,6 @@ private:
         players_ = Rd2EffectPlayers(rom_, profile_.effect_tables, first_tracks);
         const int sequences = int(info_.sequence_addresses.size());
         const agblib::sequence_export::agb::ConvertSettings settings;
-        std::vector<int> unused;
-        tags_.titles.resize(size_t(SongCount()));
-        for (int song = 0; song < sequences; song++)
-        {
-            tags_.order.push_back(song);
-        }
-
         for (size_t i = 0; i < info_.sound_effects.size(); i++)
         {
             const rd2::Effect& effect = info_.sound_effects[i];
@@ -260,25 +255,26 @@ private:
             const bool readable = effect.address && !PlaysUnreadableSample(agblib::sequence_export::rd2::InspectSong(
                                                         rom_, info_, song, settings));
             effects_.push_back(readable);
-            const bool used = TablePlayer(effect) >= 0;
-            if (!used)
-            {
-                tags_.titles[size_t(song)] = "Effect " + std::to_string(song) + " (Unused)";
-                unused.push_back(song);
-            }
-            else
-            {
-                tags_.order.push_back(song);
-            }
         }
 
-        tags_.order.insert(tags_.order.end(), unused.begin(), unused.end());
+        // The sequences come first, then the effects that a table plays, then the others.
+        tags_.titles.resize(size_t(SongCount()));
+        for (int song = 0; song < sequences; song++)
+        {
+            tags_.order.push_back(song);
+        }
+
+        const auto played = [&](int song)
+        {
+            return TablePlayer(info_.sound_effects[size_t(song - sequences)]) >= 0;
+        };
+        AddSongsUnusedLast(tags_, sequences, sequences + int(info_.sound_effects.size()), "Effect", played);
     }
 
     const agblib::agb::Rom& rom_;
     rd2::DriverInfo info_;
     const Profile& profile_;
-    std::vector<int> players_;  // the player of each track of the first sound effects' sequence, or -1
+    std::vector<int> players_;  // the player of each track of the first sequence of sound effects, or -1
     std::vector<bool> effects_; // whether each sound effect can be ripped
     GameTags tags_;
 };
@@ -319,17 +315,12 @@ std::unique_ptr<Driver> FindRd2(const agblib::agb::Rom& rom, std::string& error)
     }
 
     const std::string code = rom.GameCode();
-    for (const Profile& profile : kProfiles)
+    if (const Profile* profile = FindProfile<Profile>(kProfiles, code))
     {
-        if (code == profile.code)
-        {
-            return std::make_unique<Rd2Driver>(rom, std::move(info), profile);
-        }
+        return std::make_unique<Rd2Driver>(rom, std::move(info), *profile);
     }
 
-    error = "Nintendo R&D2's driver: the game " + code +
-            " is in no profile that gsf has, so the routines that it "
-            "calls are unknown";
+    error = NoProfileError("Nintendo R&D2's driver", code);
     return nullptr;
 }
 

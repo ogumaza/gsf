@@ -6,14 +6,14 @@
 #include "rip/stub.h"
 
 #include <cstdint>
-#include <iterator>
+#include <stdexcept>
 #include <vector>
 
 #include "agblib/agb/rom.h"
 #include "agblib/agb/system.h"
+#include "agblib/testing/agb_cart.h"
 #include "ntdlib/arm/assembler.h"
 #include "ntdlib/arm/cpu.h"
-#include "xsflib/bytes.h"
 #include "xsflib/testing/check.h"
 
 #include "rip/model.h"
@@ -21,13 +21,13 @@
 namespace
 {
 
+using agblib::agb::kEwramBase;
+using agblib::agb::kRomBase;
+using agblib::testing::agb_files::CartImage;
 using gsf::rip::InterruptHandler;
 using gsf::rip::Operation;
 using gsf::rip::StubPlan;
 using gsf::rip::Value;
-
-constexpr uint32_t kRomBase = 0x08000000;
-constexpr uint32_t kEwram = 0x02000000;
 
 // The test's routines, in ARM. Record stores r0 and r1 at kRecorded. Each count adds 1 to its word.
 constexpr uint32_t kRecord = kRomBase + 0x200;
@@ -36,27 +36,20 @@ constexpr uint32_t kCountTimer = kRomBase + 0x280;
 constexpr uint32_t kCountFrame = kRomBase + 0x2C0;
 constexpr uint32_t kData = kRomBase + 0x300; // the bytes 1 to 16
 
-// A Thumb routine that stores r0 at kThumbStored and returns with pop {pc}, which stays in Thumb state.
+// A Thumb routine that stores r0 at kThumbStored and returns with pop {pc}. The return stays in Thumb state.
 constexpr uint32_t kThumbStore = kRomBase + 0x380;
 constexpr uint32_t kStubAddress = kRomBase + 0x400;
 constexpr uint32_t kImageSize = 0x800;
 
-constexpr uint32_t kRecorded = kEwram + 0x100;
-constexpr uint32_t kVblanks = kEwram + 0x110;
-constexpr uint32_t kTimers = kEwram + 0x114;
-constexpr uint32_t kFrames = kEwram + 0x118;
-constexpr uint32_t kThumbStored = kEwram + 0x11C;
+constexpr uint32_t kRecorded = kEwramBase + 0x100;
+constexpr uint32_t kVblanks = kEwramBase + 0x110;
+constexpr uint32_t kTimers = kEwramBase + 0x114;
+constexpr uint32_t kFrames = kEwramBase + 0x118;
+constexpr uint32_t kThumbStored = kEwramBase + 0x11C;
 
 constexpr uint32_t kSong = 3;
 
-void Place(std::vector<uint8_t>& image, uint32_t address, const std::vector<uint8_t>& code)
-{
-    for (size_t i = 0; i < code.size(); i++)
-    {
-        image.at(address - kRomBase + i) = code[i];
-    }
-}
-
+// A routine at `address` that adds 1 to the word at `word`.
 std::vector<uint8_t> Counter(uint32_t address, uint32_t word)
 {
     ntdlib::arm::ArmAssembler a(address);
@@ -65,37 +58,34 @@ std::vector<uint8_t> Counter(uint32_t address, uint32_t word)
     a.Add(1, 1, 1);
     a.Str(1, 12);
     a.Bx(ntdlib::arm::kLr);
+
     return a.Finish();
 }
 
 // The test's image, with `song` where a mini stores the song's number.
-std::vector<uint8_t> TestImage(uint32_t song = kSong)
+CartImage TestImage(uint32_t song = kSong)
 {
-    std::vector<uint8_t> image(kImageSize);
-    xsflib::StoreLe16(&image[gsf::rip::kSongAddress - kRomBase], uint16_t(song));
+    CartImage image(kImageSize);
+    image.Put16(gsf::rip::kSongAddress, uint16_t(song));
 
     ntdlib::arm::ArmAssembler record(kRecord);
     record.LoadConstant(12, kRecorded);
     record.Str(0, 12);
     record.Str(1, 12, 4);
     record.Bx(ntdlib::arm::kLr);
-    Place(image, kRecord, record.Finish());
+    image.PutBytes(kRecord, record.Finish());
 
-    Place(image, kCountVblank, Counter(kCountVblank, kVblanks));
-    Place(image, kCountTimer, Counter(kCountTimer, kTimers));
-    Place(image, kCountFrame, Counter(kCountFrame, kFrames));
+    image.PutBytes(kCountVblank, Counter(kCountVblank, kVblanks));
+    image.PutBytes(kCountTimer, Counter(kCountTimer, kTimers));
+    image.PutBytes(kCountFrame, Counter(kCountFrame, kFrames));
     for (uint32_t i = 0; i < 16; i++)
     {
-        image[kData - kRomBase + i] = uint8_t(i + 1);
+        image.Put8(kData + i, uint8_t(i + 1));
     }
 
     // push {lr}; ldr r1, [pc, #4]; str r0, [r1]; pop {pc}; then the word.
-    const uint16_t thumb[] = {0xB500, 0x4901, 0x6008, 0xBD00, uint16_t(kThumbStored), uint16_t(kThumbStored >> 16)};
-    for (size_t i = 0; i < std::size(thumb); i++)
-    {
-        image[kThumbStore - kRomBase + 2 * i] = uint8_t(thumb[i]);
-        image[kThumbStore - kRomBase + 2 * i + 1] = uint8_t(thumb[i] >> 8);
-    }
+    image.PutHalfwords(kThumbStore,
+                       {0xB500, 0x4901, 0x6008, 0xBD00, uint16_t(kThumbStored), uint16_t(kThumbStored >> 16)});
 
     return image;
 }
@@ -106,10 +96,10 @@ StubPlan TestPlan()
 {
     StubPlan plan;
     plan.start = {
-        Operation::Store(kEwram + 0x200, {7}, 4),
-        Operation::Store(kEwram + 0x204, gsf::rip::SongTable({10, 20, 30, 40}), 2),
-        Operation::Copy(kData, kEwram + 0x300, 8),
-        Operation::Copy(kData + 1, kEwram + 0x310, 3),
+        Operation::Store(kEwramBase + 0x200, {7}, 4),
+        Operation::Store(kEwramBase + 0x204, gsf::rip::SongTable({10, 20, 30, 40}), 2),
+        Operation::Copy(kData, kEwramBase + 0x300, 8),
+        Operation::Copy(kData + 1, kEwramBase + 0x310, 3),
         Operation::Call(kThumbStore | 1, {{0, true}}),
         Operation::CallFromTable({0, 0, 0, kThumbStore | 1}, {{100, true}}),
         Operation::CallFromTable({kThumbStore | 1, 0, 0, 0}, {{200}}),
@@ -121,37 +111,48 @@ StubPlan TestPlan()
         {gsf::rip::kIrqTimer1, {Operation::Call(kCountTimer)}, 2.5},
     };
     plan.frame = {Operation::Call(kCountFrame)};
+
     return plan;
 }
 
-agblib::agb::Rom RomWith(const std::vector<uint8_t>& image)
+// `image` with `stub` in place. Throws std::out_of_range if the stub runs past the image.
+agblib::agb::Rom RomWithStub(CartImage image, const gsf::rip::Stub& stub)
 {
-    agblib::agb::Rom rom;
-    rom.Assign(image);
-    return rom;
+    if (stub.address - kRomBase + stub.code.size() > kImageSize)
+    {
+        throw std::out_of_range("the stub runs past the test's image");
+    }
+
+    image.PutBytes(stub.address, stub.code);
+
+    return image.ToRom();
+}
+
+// Runs the stub's start on `system`, in system mode, up to the main loop's wait.
+ntdlib::arm::StopReason RunStart(agblib::agb::System& system, const gsf::rip::Stub& stub)
+{
+    ntdlib::arm::Cpu& cpu = system.Cpu();
+    cpu.Jump(stub.address, ntdlib::arm::Mode::kSystem);
+    cpu.SetStopAddress(stub.loop);
+
+    return cpu.Run(1'000'000);
 }
 
 void TestStart()
 {
-    std::vector<uint8_t> image = TestImage();
     const gsf::rip::Stub stub = gsf::rip::BuildStub(TestPlan(), kStubAddress);
-    Place(image, kStubAddress, stub.code);
-    const agblib::agb::Rom rom = RomWith(image);
+    const agblib::agb::Rom rom = RomWithStub(TestImage(), stub);
     agblib::agb::System system(rom);
-    ntdlib::arm::Cpu& cpu = system.Cpu();
 
-    // The stub runs its start up to the main loop's wait.
-    cpu.Jump(stub.address, ntdlib::arm::Mode::kSystem);
-    cpu.SetStopAddress(stub.loop);
-    const ntdlib::arm::StopReason reason = cpu.Run(1'000'000);
+    const ntdlib::arm::StopReason reason = RunStart(system, stub);
 
     XSFLIB_CHECK(reason == ntdlib::arm::StopReason::kStopAddress);
 
     // The operations, in order: the song's number is the header's halfword at kSongAddress.
-    XSFLIB_CHECK(system.Load(kEwram + 0x200, 4) == 7);
-    XSFLIB_CHECK(system.Load(kEwram + 0x204, 4) == 40);
-    XSFLIB_CHECK(system.Load(kEwram + 0x300, 4) == 0x04030201 && system.Load(kEwram + 0x304, 4) == 0x08070605);
-    XSFLIB_CHECK(system.Load(kEwram + 0x310, 4) == 0x00040302);
+    XSFLIB_CHECK(system.Load(kEwramBase + 0x200, 4) == 7);
+    XSFLIB_CHECK(system.Load(kEwramBase + 0x204, 4) == 40);
+    XSFLIB_CHECK(system.Load(kEwramBase + 0x300, 4) == 0x04030201 && system.Load(kEwramBase + 0x304, 4) == 0x08070605);
+    XSFLIB_CHECK(system.Load(kEwramBase + 0x310, 4) == 0x00040302);
     XSFLIB_CHECK(system.Load(kThumbStored, 4) == 100 + kSong);
     XSFLIB_CHECK(system.Load(kRecorded, 4) == 5 && system.Load(kRecorded + 4, 4) == 1 + kSong);
 
@@ -162,43 +163,34 @@ void TestStart()
     XSFLIB_CHECK(system.Load(0x04000004, 2) == 0x0008);
     XSFLIB_CHECK(system.Load(0x04000200, 2) == 0x0011);
     XSFLIB_CHECK(system.Load(0x04000208, 2) == 1);
-    XSFLIB_CHECK(system.Load(0x04000088, 2) == 0x0200);
-    XSFLIB_CHECK((cpu.Cpsr() & 0xFF) == 0x1F);
-    XSFLIB_CHECK(cpu.Reg(ntdlib::arm::kSp) == gsf::rip::kSystemStack);
+    XSFLIB_CHECK(system.Load(agblib::agb::kRegSoundBias, 2) == 0x0200);
+    XSFLIB_CHECK((system.Cpu().Cpsr() & 0xFF) == 0x1F);
+    XSFLIB_CHECK(system.Cpu().Reg(ntdlib::arm::kSp) == gsf::rip::kSystemStack);
 }
 
 void TestSongHalfword()
 {
     // A plan without tables reads both bytes at kSongAddress as one halfword, and nothing after them: 0xFF at 0xC0 and
     // 0xC1 doesn't reach the number.
-    std::vector<uint8_t> image = TestImage(0x1234);
-    image[0xC0] = 0xFF;
-    image[0xC1] = 0xFF;
+    CartImage image = TestImage(0x1234);
+    image.Put16(kRomBase + 0xC0, 0xFFFF);
     StubPlan plan;
     plan.start = {Operation::Call(kRecord, {{5}, {1, true}})};
     const gsf::rip::Stub stub = gsf::rip::BuildStub(plan, kStubAddress);
-    Place(image, kStubAddress, stub.code);
-    const agblib::agb::Rom rom = RomWith(image);
+    const agblib::agb::Rom rom = RomWithStub(image, stub);
     agblib::agb::System system(rom);
-    ntdlib::arm::Cpu& cpu = system.Cpu();
-    cpu.Jump(stub.address, ntdlib::arm::Mode::kSystem);
-    cpu.SetStopAddress(stub.loop);
 
-    XSFLIB_CHECK(cpu.Run(1'000'000) == ntdlib::arm::StopReason::kStopAddress);
+    XSFLIB_CHECK(RunStart(system, stub) == ntdlib::arm::StopReason::kStopAddress);
     XSFLIB_CHECK(system.Load(kRecorded + 4, 4) == 1 + 0x1234);
 }
 
 void TestInterruptsAndLoop()
 {
-    std::vector<uint8_t> image = TestImage();
     const gsf::rip::Stub stub = gsf::rip::BuildStub(TestPlan(), kStubAddress);
-    Place(image, kStubAddress, stub.code);
-    const agblib::agb::Rom rom = RomWith(image);
+    const agblib::agb::Rom rom = RomWithStub(TestImage(), stub);
     agblib::agb::System system(rom);
     ntdlib::arm::Cpu& cpu = system.Cpu();
-    cpu.Jump(stub.address, ntdlib::arm::Mode::kSystem);
-    cpu.SetStopAddress(stub.loop);
-    cpu.Run(1'000'000);
+    RunStart(system, stub);
 
     // The BIOS calls the handler in IRQ mode for a vertical blank and timer 1's interrupt, with timer 2's off in IE.
     system.Store(0x04000202, 2, 0x0031);
@@ -220,6 +212,7 @@ void TestInterruptsAndLoop()
         {
             cpu.Stop();
         }
+
         return true;
     };
     cpu.SetCpsr(0x1F);
@@ -233,7 +226,7 @@ void TestInterruptsAndLoop()
 
 void TestModelRun()
 {
-    const agblib::agb::Rom rom = RomWith(TestImage());
+    const agblib::agb::Rom rom = TestImage().ToRom();
     std::vector<uint8_t> reads;
 
     gsf::rip::ModelRun run(rom, TestPlan(), kSong, &reads);
@@ -246,8 +239,8 @@ void TestModelRun()
     XSFLIB_CHECK(run.Frames() == 3);
     XSFLIB_CHECK(run.Gba().Load(kRecorded + 4, 4) == 1 + kSong);
     XSFLIB_CHECK(run.Gba().Load(kThumbStored, 4) == 100 + kSong);
-    XSFLIB_CHECK(run.Gba().Load(kEwram + 0x204, 4) == 40);
-    XSFLIB_CHECK(run.Gba().Load(kEwram + 0x310, 4) == 0x00040302);
+    XSFLIB_CHECK(run.Gba().Load(kEwramBase + 0x204, 4) == 40);
+    XSFLIB_CHECK(run.Gba().Load(kEwramBase + 0x310, 4) == 0x00040302);
     XSFLIB_CHECK(run.Gba().Load(kVblanks, 4) == 3);
     XSFLIB_CHECK(run.Gba().Load(kTimers, 4) == 7);
     XSFLIB_CHECK(run.Gba().Load(kFrames, 4) == 3);
@@ -261,7 +254,7 @@ void TestModelRun()
 
 void TestStandIn()
 {
-    const agblib::agb::Rom rom = RomWith(TestImage());
+    const agblib::agb::Rom rom = TestImage().ToRom();
 
     // A stand-in for timer 1's routine counts in its place.
     gsf::rip::ModelRun run(rom, TestPlan(), kSong, nullptr);
@@ -283,6 +276,60 @@ void TestStandIn()
     XSFLIB_CHECK(run.Gba().Load(kTimers, 4) == 0);
 }
 
+void TestGameHandler()
+{
+    // The game's handler in place of the stub's, with timer 1's interrupt and no vertical blank's.
+    StubPlan plan = TestPlan();
+    plan.interrupts = gsf::rip::kIrqTimer1;
+    plan.handlers = {{gsf::rip::kIrqTimer1, {Operation::Call(kCountTimer)}, 2.5}};
+    plan.game_handler = kCountTimer;
+    const gsf::rip::Stub stub = gsf::rip::BuildStub(plan, kStubAddress);
+    const agblib::agb::Rom rom = RomWithStub(TestImage(), stub);
+    agblib::agb::System system(rom);
+    ntdlib::arm::Cpu& cpu = system.Cpu();
+
+    XSFLIB_CHECK(RunStart(system, stub) == ntdlib::arm::StopReason::kStopAddress);
+
+    // The start runs as with the stub's handler. The game's handler is in place, with timer 1's interrupt on in IE and
+    // nothing in DISPSTAT.
+    XSFLIB_CHECK(system.Load(kEwramBase + 0x204, 4) == 40);
+    XSFLIB_CHECK(system.Load(kRecorded, 4) == 5 && system.Load(kRecorded + 4, 4) == 1 + kSong);
+    XSFLIB_CHECK(system.Load(gsf::rip::kIrqHandler, 4) == kCountTimer);
+    XSFLIB_CHECK(system.Load(0x04000004, 2) == 0);
+    XSFLIB_CHECK(system.Load(0x04000200, 2) == gsf::rip::kIrqTimer1);
+    XSFLIB_CHECK(system.Load(0x04000208, 2) == 1);
+
+    // The stub writes no handler. It's shorter than the same plan's stub with the stub's handler.
+    StubPlan with_handler = plan;
+    with_handler.game_handler = 0;
+    XSFLIB_CHECK(stub.code.size() < gsf::rip::BuildStub(with_handler, kStubAddress).code.size());
+
+    // The main loop waits with Halt for any interrupt, then runs the frame's operations.
+    std::vector<uint32_t> calls;
+    system.on_swi = [&](uint32_t number)
+    {
+        calls.push_back(number);
+        if (calls.size() == 2)
+        {
+            cpu.Stop();
+        }
+
+        return true;
+    };
+    cpu.SetStopAddress(0xFFFFFFFF);
+
+    XSFLIB_CHECK(cpu.Run(1'000'000) == ntdlib::arm::StopReason::kStopped);
+    XSFLIB_CHECK(calls == (std::vector<uint32_t>{2, 2}));
+    XSFLIB_CHECK(system.Load(kFrames, 4) == 1);
+
+    // The model's runs still call each handler's operations as often as its interrupt comes.
+    gsf::rip::ModelRun run(rom, plan, kSong, nullptr);
+    run.Frame();
+    run.Frame();
+
+    XSFLIB_CHECK(run.Gba().Load(kTimers, 4) == 5);
+}
+
 void TestBranchWord()
 {
     XSFLIB_CHECK(gsf::rip::BranchWord(kRomBase, kRomBase + 0xC0) == 0xEA00002E);
@@ -298,6 +345,7 @@ int main()
     TestInterruptsAndLoop();
     TestModelRun();
     TestStandIn();
+    TestGameHandler();
     TestBranchWord();
 
     return xsflib::testing::Summary("stub");

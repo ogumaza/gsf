@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 
-// A stub's plan run on agblib's model of the GBA (agblib::agb::System): the same calls, stores and copies as the stub
-// makes, in the same order. The model runs no interrupts. Each frame runs the vertical blank's handler, then each other
-// handler as often as its interrupt comes in a frame, then the main loop's operations. A ripper trims a set to the
-// cartridge's bytes that these runs read.
+// The plan of a stub, run on the agblib model of the GBA (agblib::agb::System): the calls, stores and copies of the
+// stub, in the same order. The model runs no interrupts. Each frame runs the handlers in the order of the plan: a
+// handler of the vertical blank once, and each other handler as often as its interrupt comes in a frame. The operations
+// of the main loop follow. A ripper trims a set to the bytes of the cartridge that these runs read.
 //
 // The model runs no timed DMA either: a DMA at the blanks or for the sound FIFOs reads nothing in a run. A run records
-// each such DMA that the code starts with its source in the cartridge, so that a rip can check the bytes it reads.
+// each such DMA that the code starts with its source in the cartridge. A rip then checks the bytes that the DMA reads.
 
 #pragma once
 
@@ -25,8 +25,8 @@
 namespace gsf::rip
 {
 
-// A DMA that transfers at the vertical or horizontal blank, or when a sound FIFO asks for data, as the code started it:
-// the channel, the source and the count that it starts with, and the control (DMAxCNT_H).
+// A DMA that transfers at the vertical or horizontal blank, or when a sound FIFO requests data. The record contains the
+// values that the code started it with: the channel, the source, the count and the control (DMAxCNT_H).
 struct TimedDma
 {
     auto operator<=>(const TimedDma&) const = default;
@@ -37,9 +37,9 @@ struct TimedDma
     uint16_t control = 0;
 };
 
-// The bytes of the cartridge that `dma` reads in its first transfer, which it reads whatever the order of the
-// interrupts: the offset of the first of them in the cartridge, and their count. A sound FIFO's transfer is 16 bytes.
-// `dma`'s source is in the cartridge, where the source always counts up.
+// The bytes of the cartridge that `dma` reads in its first transfer: the offset of the first byte in the cartridge, and
+// the count. The DMA reads them whatever the order of the interrupts. A transfer of a sound FIFO is 16 bytes. The
+// source of `dma` is in the cartridge, where the source always counts up.
 struct DmaBytes
 {
     uint32_t offset = 0;
@@ -64,13 +64,14 @@ public:
 
     agblib::agb::System& Gba();
 
-    // Called before each call of a routine, with its address. A driver's model can stand in for a routine that reads
-    // what the model doesn't have, such as a DMA's position: it returns true when it made the call itself.
-    std::function<bool(agblib::agb::System& gba, uint32_t routine)> on_call;
-
     // The timed DMAs that the run started with a source in the cartridge, and the count of their starts.
     const std::set<TimedDma>& TimedDmas() const;
     uint64_t TimedDmaStarts() const;
+
+    // Called before each call of a routine, with the address of the routine. A driver can use it to stand in for a
+    // routine that reads what the model doesn't have, such as the position of a DMA. It returns true when it made the
+    // call in place of the routine.
+    std::function<bool(agblib::agb::System& gba, uint32_t routine)> on_call;
 
 private:
     void Run(const std::vector<Operation>& operations);

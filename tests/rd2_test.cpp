@@ -2,7 +2,7 @@
 
 // Tests of Nintendo R&D2's driver as gsf rips it: the players of a game's tables of sound effects
 // (rip/drivers/rd2.h), and the sound effects of A Link to the Past's profile on agblib's synthetic cartridge of the
-// driver, which has none of the game's tables.
+// driver. The cartridge has none of the game's tables.
 
 #include "rip/drivers/rd2.h"
 
@@ -11,25 +11,23 @@
 #include <string>
 #include <vector>
 
+#include "agblib/agb/rom.h"
+#include "agblib/testing/rd2_cart.h"
 #include "xsflib/bytes.h"
 #include "xsflib/testing/check.h"
 
-#include "agblib/agb/rom.h"
-#include "agblib/testing/rd2_cart.h"
 #include "rip/driver.h"
 #include "rip/stub.h"
 
 namespace
 {
 
+using agblib::agb::kRomBase;
 using gsf::rip::Rd2EffectTable;
 
-constexpr uint32_t kRomBase = 0x08000000;
+// The places of the two tables of sound effects in the test's image.
 constexpr uint32_t kTable = 0x100;
 constexpr uint32_t kSlots = 0x200;
-
-// The game code in the cartridge's header.
-constexpr uint32_t kGameCode = kRomBase + 0xAC;
 
 void TestEffectPlayers()
 {
@@ -52,7 +50,7 @@ void TestEffectPlayers()
 
 void TestEffectTableOutsideRom()
 {
-    // A table that lies outside the cartridge names no player.
+    // A table outside the cartridge names no player.
     agblib::agb::Rom rom;
     rom.Assign(std::vector<uint8_t>(0x100));
     const std::vector<Rd2EffectTable> tables = {{kRomBase + 0x100, 0x40}};
@@ -70,11 +68,7 @@ void TestEffectsOfProfile()
     Cart cart;
     cart.Sequences({{TrackData().Note(60, 12, 100).End()}});
     cart.Effects({{TrackData().Note(60, 12, 100).End(), {}, TrackData().Wait(1).End()}});
-    const std::string code = "AZLE";
-    for (size_t i = 0; i < code.size(); i++)
-    {
-        cart.Put8(kGameCode + uint32_t(i), uint8_t(code[i]));
-    }
+    cart.SetGameCode("AZLE");
 
     std::string error;
     const std::unique_ptr<gsf::rip::Driver> driver = gsf::rip::FindDriver(cart.ToRom(), error);

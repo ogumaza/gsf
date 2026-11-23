@@ -8,10 +8,10 @@
 #include <string>
 #include <vector>
 
-#include "xsflib/testing/check.h"
-
 #include "agblib/agb/rom.h"
 #include "agblib/testing/quintet_cart.h"
+#include "xsflib/testing/check.h"
+
 #include "rip/driver.h"
 #include "rip/stub.h"
 
@@ -19,9 +19,6 @@ namespace
 {
 
 namespace cart = agblib::testing::quintet_cart;
-
-// The game code in the cartridge's header.
-constexpr uint32_t kGameCode = cart::kRomBase + 0xAC;
 
 // Super Robot Taisen A's play routine and its routine that plays a sound effect, both Thumb code.
 constexpr uint32_t kPlay = 0x08003551;
@@ -35,10 +32,7 @@ agblib::agb::Rom MakeRom(const std::string& code)
         {cart::Song({cart::Channel().Bytes({0x00, 4}).End()}), cart::Song({cart::Channel().Bytes({0x00, 8}).End()})});
     image.Effects(
         {cart::Song({cart::Channel().Bytes({0x00, 4}).End()}), cart::Song({cart::Channel().Bytes({0x00, 2}).End()})});
-    for (size_t i = 0; i < code.size(); i++)
-    {
-        image.Put8(kGameCode + uint32_t(i), uint8_t(code[i]));
-    }
+    image.SetGameCode(code);
 
     return image.ToRom();
 }

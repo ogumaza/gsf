@@ -2,7 +2,7 @@
 
 // Tests of ITE Media's driver (rip/drivers/ite.cpp) on a synthetic cartridge with Hugo: The Evil Mirror's game code and
 // the driver's init at the US release's address. The expected routines and values are those of the US release's
-// profile, from a reading of the game's code that runs of the game in mGBA 0.11 checked.
+// profile. They come from a reading of the game's code, and runs of the game in mGBA 0.11 confirmed them.
 
 #include <cmath>
 #include <cstdint>
@@ -13,6 +13,8 @@
 
 #include "agblib/agb/gba.h"
 #include "agblib/agb/rom.h"
+#include "agblib/agb/system.h"
+#include "agblib/testing/agb_cart.h"
 #include "xsflib/rip/length.h"
 #include "xsflib/testing/check.h"
 
@@ -22,10 +24,11 @@
 namespace
 {
 
+using agblib::agb::kRomBase;
+using agblib::testing::agb_files::CartImage;
 using gsf::rip::Driver;
 using gsf::rip::Operation;
 
-constexpr uint32_t kRomBase = 0x08000000;
 constexpr size_t kCartSize = 0x30000;
 
 // The driver's init and its literal pool, the game's call of the init and the bank.
@@ -38,57 +41,6 @@ constexpr uint32_t kBank = 0x08020000;
 // A tick of 256 samples of the driver's mix.
 constexpr uint16_t kTempo = 0xA2;
 
-class Cart
-{
-public:
-    Cart() : bytes_(kCartSize, 0)
-    {
-    }
-
-    void Put8(uint32_t a, uint8_t v)
-    {
-        bytes_[a - kRomBase] = v;
-    }
-
-    void Put16(uint32_t a, uint16_t v)
-    {
-        Put8(a, uint8_t(v));
-        Put8(a + 1, uint8_t(v >> 8));
-    }
-
-    void Put32(uint32_t a, uint32_t v)
-    {
-        Put16(a, uint16_t(v));
-        Put16(a + 2, uint16_t(v >> 16));
-    }
-
-    void PutBytes(uint32_t a, const std::vector<uint8_t>& bytes)
-    {
-        for (size_t i = 0; i < bytes.size(); i++)
-        {
-            Put8(a + uint32_t(i), bytes[i]);
-        }
-    }
-
-    // The Thumb bl at `a` that calls `target`.
-    void PutBl(uint32_t a, uint32_t target)
-    {
-        const uint32_t offset = (target - (a + 4)) >> 1;
-        Put16(a, uint16_t(0xF000 | ((offset >> 11) & 0x7FF)));
-        Put16(a + 2, uint16_t(0xF800 | (offset & 0x7FF)));
-    }
-
-    agblib::agb::Rom ToRom() const
-    {
-        agblib::agb::Rom rom;
-        rom.Assign(bytes_);
-        return rom;
-    }
-
-private:
-    std::vector<uint8_t> bytes_;
-};
-
 // A song of one channel and one pattern for each order.
 struct TestSong
 {
@@ -100,13 +52,10 @@ struct TestSong
 // The game's code `code`, the driver, and a bank of `songs`.
 agblib::agb::Rom MakeRom(const char* code, const std::vector<TestSong>& songs)
 {
-    Cart cart;
-    for (int i = 0; i < 4; i++)
-    {
-        cart.Put8(kRomBase + 0xAC + uint32_t(i), uint8_t(code[i]));
-    }
+    CartImage cart(kCartSize);
+    cart.SetGameCode(code);
 
-    // The init: push {r4-r7, lr}, then ldr r1, [pc, #32], which loads DMA3SAD from the pool.
+    // The init: push {r4-r7, lr}, then ldr r1, [pc, #32]. The load reads DMA3SAD from the pool.
     cart.Put16(kInit, 0xB5F0);
     cart.Put16(kInit + 2, 0x4908);
     const uint32_t pool[] = {0x040000D4, 0x08020D04, 0x03000A50, 0x84000030, 0x08020DC4, 0x030003F0, 0x8400003A};
@@ -115,7 +64,7 @@ agblib::agb::Rom MakeRom(const char* code, const std::vector<TestSong>& songs)
         cart.Put32(kPool + 4 * i, pool[i]);
     }
 
-    // The game's call: ldr r1, [pc, #20], which loads the bank, then bl to the init.
+    // The game's call: ldr r1, [pc, #20] to load the bank, then bl to the init.
     cart.Put16(kCall, 0x4905);
     cart.PutBl(kCall + 2, kInit);
     cart.Put32(kBankLiteral, kBank);
@@ -188,9 +137,9 @@ void TestPlan()
     // music's volume by song; each frame, the count of frames to DMA 1's restart and the mix.
     const gsf::rip::StubPlan plan = driver->Plan();
     XSFLIB_REQUIRE(plan.start.size() == 11);
-    XSFLIB_CHECK(plan.start[0].kind == Operation::Kind::kStore && plan.start[0].address == 0x04000204 &&
+    XSFLIB_CHECK(plan.start[0].kind == Operation::Kind::kStore && plan.start[0].address == agblib::agb::kRegWaitCnt &&
                  plan.start[0].values[0].constant == 0x4316);
-    XSFLIB_CHECK(plan.start[1].address == 0x04000088 && plan.start[1].values[0].constant == 0x4200);
+    XSFLIB_CHECK(plan.start[1].address == agblib::agb::kRegSoundBias && plan.start[1].values[0].constant == 0x4200);
     XSFLIB_CHECK(CallTarget(plan.start[2]) == (kInit | 1) && plan.start[2].values[1].constant == kBank);
     XSFLIB_CHECK(plan.start[3].address == 0x030003E4 && plan.start[3].values[0].constant == 5);
     XSFLIB_CHECK(plan.start[4].address == 0x03000B78 && plan.start[4].values[0].constant == 5);
@@ -225,54 +174,37 @@ void TestTiming()
     const std::optional<xsflib::rip::Timing> silent = driver->SongTiming(3);
     const std::optional<xsflib::rip::Timing> rings = driver->SongTiming(5);
 
-    // Song 0's loop runs from 512 samples to 1024: its intro and two passes take 1536 samples, 5.6 frames. Song 2 ends
-    // on the tick after its F00, 256 samples in.
-    const xsflib::rip::Timing expected_loop = xsflib::rip::LoopAt(6, frame_ms, gsf::rip::kFadeMs);
-    const xsflib::rip::Timing expected_end = xsflib::rip::EndAt(1, frame_ms, gsf::rip::kTailMs);
+    // Song 0's loop runs from 512 samples to 1024: its intro and two passes take 1536 samples, 5.6 frames, and a pass
+    // takes 512 samples, 1.9 frames. Song 2 ends on the tick after its F00, 256 samples in.
+    const xsflib::rip::Timing expected_loop = xsflib::rip::PassesAt(6, 2, frame_ms, gsf::rip::kFadeMs);
+    const xsflib::rip::Timing expected_end = xsflib::rip::EndAt(1, frame_ms);
     XSFLIB_REQUIRE(loop && end && silent);
     XSFLIB_CHECK(loop->length_ms == expected_loop.length_ms && loop->fade_ms == expected_loop.fade_ms);
+    XSFLIB_CHECK(loop->loop == expected_loop.loop && loop->fade_ms == 7'000);
     XSFLIB_CHECK(end->length_ms == expected_end.length_ms && end->fade_ms == expected_end.fade_ms);
     XSFLIB_CHECK(!loop->silent && !end->silent && silent->silent);
 
     // Song 5's F00 comes as early as song 2's, but the profile gives song 5 a last sound at 3200 ms. Its timing runs
     // to that frame, and the coverage then covers the samples that ring on.
-    const xsflib::rip::Timing expected_rings =
-        xsflib::rip::EndAt(uint64_t(std::ceil(3200 / frame_ms)), frame_ms, gsf::rip::kTailMs);
+    const xsflib::rip::Timing expected_rings = xsflib::rip::EndAt(uint64_t(std::ceil(3200 / frame_ms)), frame_ms);
     XSFLIB_REQUIRE(rings);
     XSFLIB_CHECK(rings->length_ms == expected_rings.length_ms && rings->fade_ms == expected_rings.fade_ms);
 
-    // The profile gives the last sound of a song that ends, which mGBA measured on the set: the game over's, and none
-    // for a song that loops.
+    // The profile gives the last sound of each song that ends, such as the game over's, measured on the set in mGBA. A
+    // song that loops gets none.
     XSFLIB_CHECK(driver->LastSoundMs(27) == 7310 && driver->LastSoundMs(5) == 3200 && !driver->LastSoundMs(0));
 }
 
-void TestTags()
+void TestNoTags()
 {
     const agblib::agb::Rom rom = MakeRom("AHJE", kSongs);
     std::string error;
+
     const std::unique_ptr<Driver> driver = gsf::rip::FindDriver(rom, error);
+
+    // The driver gives no titles and no order: the set lists the songs by number.
     XSFLIB_REQUIRE(driver != nullptr);
-
-    const gsf::rip::GameTags* tags = driver->Tags();
-
-    // Every song of the game's 28 but the two without patterns is in the order once, with a title.
-    XSFLIB_REQUIRE(tags != nullptr);
-    XSFLIB_CHECK(tags->game == "Hugo: The Evil Mirror" && tags->year == "2002-09-17");
-    XSFLIB_REQUIRE(tags->titles.size() == 28);
-    XSFLIB_CHECK(tags->order.size() == 26);
-    std::vector<int> seen(28, 0);
-    for (const int song : tags->order)
-    {
-        XSFLIB_REQUIRE(song >= 0 && song < 28);
-        seen[size_t(song)]++;
-    }
-
-    for (int song = 0; song < 28; song++)
-    {
-        const bool empty = song == 4 || song == 6;
-        XSFLIB_CHECK(seen[size_t(song)] == (empty ? 0 : 1));
-        XSFLIB_CHECK(tags->titles[size_t(song)].empty() == empty);
-    }
+    XSFLIB_CHECK(driver->Tags() == nullptr);
 }
 
 void TestOtherRelease()
@@ -308,7 +240,7 @@ int main()
 {
     TestPlan();
     TestTiming();
-    TestTags();
+    TestNoTags();
     TestOtherRelease();
     TestFindDrivers();
 

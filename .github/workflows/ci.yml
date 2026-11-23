@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 
 # Builds gsf whenever main changes: on Windows x64 with clang-cl, and on macOS ARM64. The Windows job runs ctest too.
-# The macOS job builds the Release configuration without the tests (GSF_TESTS=OFF). Changes to documentation alone
-# don't start a run.
+# The macOS job builds the Release configuration without the tests (GSF_TESTS=OFF). Changes to documentation alone don't
+# start a run.
 name: CI
 
 on:

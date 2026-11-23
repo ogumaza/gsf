@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: MIT
 
-// Quintet's driver, as Banpresto's Super Robot Taisen games and the games with music files play it. agblib's detection
-// finds the songs, the samples and the music files. A profile for each game gives the routines that the game calls:
-// its sound init, the call after it where the driver loads music files, the loader, the play routine and the per-frame
-// routine. Each game's code gives them.
+// Quintet's driver, as Banpresto's Super Robot Taisen games and the games with music files play it. The agblib
+// detection finds the songs, the samples and the music files. A profile for each game gives the routines that the game
+// calls: its sound init, the call after it where the driver loads music files, the loader, the play routine and the
+// per-frame routine. Their addresses come from the code of each game.
 //
-// The game calls the sound init, then, in a game with music files, the call after it. It starts a song with the play
-// routine and the song's number in its file, after the loader has read the file. The game's handler of the vertical
-// blank runs the per-frame routine. The driver doesn't mix: each FIFO's DMA reads a sample from the cartridge. The
-// model runs no DMA, so the library keeps the whole of each sample whose header a run read.
+// The game calls the sound init. A game with music files then makes the call after it. The game starts a song with the
+// play routine and the number of the song in its file, after the loader has read the file. The handler of the vertical
+// blank in the game runs the per-frame routine. The driver doesn't mix: the DMA of each FIFO reads a sample from the
+// cartridge. The model runs no DMA. The library therefore keeps the whole of each sample whose header a run read.
 //
-// gsf rips the songs. agblib numbers the sound effects after each file's songs. With --effects, a Super Robot Taisen
-// game gets a mini for each sound effect too. The game's routine that plays a sound effect finds it in the sound
-// effects' file by its index, and calls the driver's routine for sound effects. It plays on the driver's 6 channels for
-// sound effects.
+// gsf rips the songs. agblib numbers the sound effects after the songs of each file. With --effects, a Super Robot
+// Taisen game also gets a mini for each sound effect. The game routine that plays a sound effect finds it in the file
+// of sound effects by its index, and calls the routine of the driver for sound effects. The effect plays on the 6
+// channels of the driver for sound effects.
 
-#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -37,7 +37,7 @@ namespace
 
 namespace quintet = agblib::quintet;
 
-// The routines of a game's driver, all Thumb code. `after_init` and `loader` are 0 in a game without music files.
+// The routines of the driver in a game, all Thumb code. `after_init` and `loader` are 0 in a game without music files.
 // `play_effect` is 0 in a game whose sound effects gsf doesn't rip.
 struct Profile
 {
@@ -51,17 +51,17 @@ struct Profile
 };
 
 constexpr Profile kProfiles[] = {
-    // The Super Robot Taisen games: the game's sound init, its play routine of song r0, its per-frame routine and its
-    // routine that plays sound effect r0. The play routines walk the music's file or the sound effects' file to the
-    // song, then call the driver's routine: ASRJ's 0x0805D1FC and 0x0805D254, A6SJ's 0x080713E0 and 0x08071438, AJ9J's
-    // 0x08057294 and 0x080572EC, and B6JJ's 0x0807D250 and 0x0807D2B8.
+    // The Super Robot Taisen games: the sound init of the game, its play routine of song r0, its per-frame routine and
+    // its routine that plays sound effect r0. The play routines walk the file of the music or of the sound effects to
+    // the song, then call the routine of the driver: 0x0805D1FC and 0x0805D254 in ASRJ, 0x080713E0 and 0x08071438 in
+    // A6SJ, 0x08057294 and 0x080572EC in AJ9J, and 0x0807D250 and 0x0807D2B8 in B6JJ.
     {"ASRJ", 0x080034F0, 0, 0, 0x08003550, 0x08003544, 0x08003594},
     {"A6SJ", 0x08004A30, 0, 0, 0x08004A94, 0x08004A84, 0x08004AD8},
     {"AJ9J", 0x08004AB4, 0, 0, 0x08004B18, 0x08004B08, 0x08004B5C},
     {"B6JJ", 0x080083D0, 0, 0, 0x08008440, 0x08008430, 0x08008498},
 
-    // The games with music files: the driver's init, the game's call after it, the loader of the file whose first
-    // word r0 gives, the play routine of song r0 of that file and the per-frame routine.
+    // The games with music files: the init of the driver, the call of the game after it, the loader of the file whose
+    // first word r0 gives, the play routine of song r0 of that file and the per-frame routine.
     {"A2PJ", 0x0803FB38, 0x08042784, 0x0803FE28, 0x0803FF18, 0x08041C78},
     {"A8DJ", 0x08082B4C, 0x0808572C, 0x08082E3C, 0x08082F2C, 0x08084C20},
     {"AAIJ", 0x080A8118, 0x080AACF8, 0x080A8408, 0x080A84F8, 0x080AA1EC},
@@ -74,9 +74,6 @@ constexpr Profile kProfiles[] = {
     {"AVDJ", 0x080C8960, 0x080CB5AC, 0x080C8C50, 0x080C8D40, 0x080CAAA0},
     {"BPDJ", 0x08159098, 0x0815BC78, 0x08159388, 0x08159478, 0x0815B16C},
 };
-
-// The bytes of a sample's header that the driver reads: the size, then the rate.
-constexpr uint32_t kSampleHeaderBytes = 6;
 
 class QuintetDriver : public Driver
 {
@@ -145,16 +142,18 @@ public:
                 for (size_t number = 0; number < file.sample_addresses[size_t(bank)].size(); number++)
                 {
                     const std::optional<quintet::Sample> sample = quintet::ReadSample(rom_, file, bank, int(number));
-                    if (sample && Read(reads, sample->header, kSampleHeaderBytes))
+                    // The driver reads the header just before the data: the size, then the rate.
+                    if (sample && AnyRead(reads, {sample->header, sample->data - sample->header}) &&
+                        rom_.Contains(sample->data, sample->size))
                     {
-                        Mark(reads, sample->data, sample->size);
+                        MarkSpan(reads, {sample->data, sample->size});
                     }
                 }
             }
         }
     }
 
-    // Each FIFO's DMA reads from a sample's data, and CompleteReads() keeps the whole of each sample.
+    // The DMA of each FIFO reads from the data of a sample, and CompleteReads() keeps the whole of each sample.
     bool KeepsTimedDmaReads() const override
     {
         return true;
@@ -169,11 +168,11 @@ public:
     }
 
 private:
-    // The plan of the stub: the game's sound init and the calls after it, then the song's start, or with `effects` a
-    // sound effect's start through the game's routine for sound effects.
+    // The plan of the stub: the sound init of the game and the calls after it, then the start of the song. With
+    // `effects`, the plan starts a sound effect through the game routine for sound effects instead.
     StubPlan MakePlan(bool effects) const
     {
-        // Each mini's number picks the file and the song in it, or the sound effect.
+        // The number of each mini selects the file and the song in it, or the sound effect.
         std::vector<uint32_t> file_words;
         std::vector<uint32_t> indices;
         std::vector<uint32_t> routines;
@@ -219,38 +218,6 @@ private:
         return files_[quintet::FileOfSong(files_, song)];
     }
 
-    // Whether a run read any of the `size` bytes at `address`.
-    static bool Read(const std::vector<uint8_t>& reads, uint32_t address, uint32_t size)
-    {
-        const size_t first = address - agblib::agb::kRomBase;
-        for (size_t i = first; i < first + size && i < reads.size(); i++)
-        {
-            if (reads[i])
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    // Marks the `size` bytes at `address`.
-    void Mark(std::vector<uint8_t>& reads, uint32_t address, uint32_t size) const
-    {
-        if (!rom_.Contains(address, size))
-        {
-            return;
-        }
-
-        const size_t first = address - agblib::agb::kRomBase;
-        if (reads.size() < first + size)
-        {
-            reads.resize(first + size);
-        }
-
-        std::fill_n(reads.begin() + std::ptrdiff_t(first), size, uint8_t{1});
-    }
-
     const agblib::agb::Rom& rom_;
     std::vector<quintet::DriverInfo> files_;
     const Profile& profile_;
@@ -268,17 +235,12 @@ std::unique_ptr<Driver> FindQuintet(const agblib::agb::Rom& rom, std::string& er
     }
 
     const std::string code = rom.GameCode();
-    for (const Profile& profile : kProfiles)
+    if (const Profile* profile = FindProfile<Profile>(kProfiles, code))
     {
-        if (code == profile.code)
-        {
-            return std::make_unique<QuintetDriver>(rom, quintet::ReadMusicFiles(rom, info), profile);
-        }
+        return std::make_unique<QuintetDriver>(rom, quintet::ReadMusicFiles(rom, info), *profile);
     }
 
-    error = "Quintet's driver: the game " + code +
-            " is in no profile that gsf has, so the routines that it calls are "
-            "unknown";
+    error = NoProfileError("Quintet's driver", code);
     return nullptr;
 }
 

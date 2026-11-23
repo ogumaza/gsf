@@ -2,16 +2,22 @@
 
 #include "rip/stub.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
+#include "agblib/agb/rom.h"
+#include "agblib/agb/system.h"
 #include "ntdlib/arm/assembler.h"
 
 namespace gsf::rip
 {
 
+using agblib::agb::kIoBase;
+using agblib::agb::kRomBase;
 using ntdlib::arm::ArmAssembler;
 using ntdlib::arm::Condition;
 using ntdlib::arm::kFiqsOff;
@@ -26,21 +32,20 @@ namespace
 {
 
 // The I/O registers that the stub writes, from the start of the I/O.
-constexpr uint32_t kIoBase = 0x04000000;
 constexpr int kDispStat = 0x004;
-constexpr int kSoundBias = 0x088;
+constexpr int kSoundBias = int(agblib::agb::kRegSoundBias - kIoBase);
 constexpr uint32_t kBootSoundBias = 0x0200; // what the BIOS leaves in SOUNDBIAS, by GBATEK
 constexpr uint32_t kInterruptBlock = 0x200; // IE, then IF at +2 and IME at +8
 constexpr int kIf = 2;
 constexpr int kIme = 8;
 constexpr uint32_t kVblankIrqEnable = 0x0008; // DISPSTAT's bit
 
-// The BIOS's calls that the main loop waits with.
+// The BIOS calls that the main loop waits with.
 constexpr uint32_t kHalt = 0x02;
 constexpr uint32_t kVblankIntrWait = 0x05;
 
-// The registers of the stub's operations. A call takes its arguments in r0 to r3 and its routine in r12. The stub
-// keeps nothing in a register across a call.
+// The registers of the stub's operations. A call takes its arguments in r0 to r3 and its routine in r12. The stub keeps
+// nothing in a register across a call.
 constexpr int kR0 = 0;
 constexpr int kR1 = 1;
 constexpr int kR2 = 2;
@@ -68,7 +73,7 @@ public:
         }
     }
 
-    // The tables of the values that Write() loaded from one, each at its label.
+    // Writes each table that Write() loaded a value or a routine from, at its label.
     void WriteTables()
     {
         for (const auto& [label, table] : tables_)
@@ -140,15 +145,13 @@ private:
             break;
 
         case Operation::Kind::kCopy:
-            {
-                Copy(operation);
-            }
+            Copy(operation);
             break;
         }
     }
 
-    // Calls the song's Thumb routine from `routines`, or skips the call for an entry of 0. The arguments are in r0 to
-    // r3 already, so the table's address goes in lr, which the call sets anyway.
+    // Calls the Thumb routine of the song from `routines`, or skips the call for an entry of 0. The arguments are in r0
+    // to r3 already. The address of the table therefore goes in lr. The call sets lr anyway.
     void CallFromTable(const std::vector<uint32_t>& routines)
     {
         for (const uint32_t routine : routines)
@@ -171,7 +174,7 @@ private:
         a_.Bind(skip);
     }
 
-    // rd = value. A load from a table uses r12, which a call sets to its routine after its arguments.
+    // rd = value. A load from a table uses r12. A call sets r12 to its routine after its arguments.
     void Load(int rd, const Value& value)
     {
         if (!value.table.empty())
@@ -197,7 +200,7 @@ private:
         }
     }
 
-    // rd = the song's number, the halfword at kSongAddress.
+    // rd = the number of the song: the halfword at kSongAddress.
     void LoadSong(int rd)
     {
         a_.Mov(rd, kSongAddress & 0xFF000000);
@@ -238,8 +241,8 @@ private:
 };
 
 // The interrupt handler that the BIOS calls in IRQ mode, with r0 to r3, r12 and lr saved. It acknowledges the
-// interrupts that are on and have come, in IF and in the BIOS's flags. It then runs their operations in system mode,
-// with IRQs still off, on the stack of the code that the interrupt stopped.
+// interrupts that are on and have come, in IF and in the BIOS flags. It then runs their operations in system mode, with
+// IRQs still off, on the stack of the code that the interrupt stopped.
 void WriteInterruptHandler(ArmAssembler& a, OperationWriter& writer, const StubPlan& plan)
 {
     a.Mov(kR12, kIoBase);
@@ -275,6 +278,18 @@ Value SongTable(std::vector<uint32_t> table)
     Value value;
     value.table = std::move(table);
     return value;
+}
+
+std::vector<Value> Constants(std::span<const uint32_t> words)
+{
+    std::vector<Value> values;
+    values.reserve(words.size());
+    for (const uint32_t word : words)
+    {
+        values.push_back({word});
+    }
+
+    return values;
 }
 
 Operation Operation::Call(uint32_t routine, std::vector<Value> args)
@@ -315,9 +330,9 @@ Operation Operation::Copy(uint32_t source, uint32_t destination, uint32_t size)
 
 uint32_t StubSize(const StubPlan& plan)
 {
-    // The size doesn't depend on the address: the literal pool keeps each label's address apart from the constants,
-    // even where the two hold the same value.
-    return uint32_t(BuildStub(plan, 0x08000000).code.size());
+    // The size doesn't depend on the address: the literal pool keeps the address of each label apart from the
+    // constants, even where the two have the same value.
+    return uint32_t(BuildStub(plan, kRomBase).code.size());
 }
 
 Stub BuildStub(const StubPlan& plan, uint32_t address)
@@ -335,21 +350,28 @@ Stub BuildStub(const StubPlan& plan, uint32_t address)
     a.SetControl(kModeSystem | kIrqsOff | kFiqsOff);
     a.LoadConstant(kSp, kSystemStack);
 
-    // SOUNDBIAS as the BIOS leaves it, IME off, and the handler in place.
+    // SOUNDBIAS as the BIOS leaves it, IME off, and the handler in place: that of the stub, or that of the game.
     a.Mov(kR0, kIoBase);
     a.LoadConstant(kR1, kBootSoundBias);
     a.Strh(kR1, kR0, kSoundBias);
     a.Add(kR0, kR0, kInterruptBlock);
     a.Mov(kR1, 0);
     a.Strh(kR1, kR0, kIme);
-    a.LoadAddress(kR0, interrupt_handler);
+    if (plan.game_handler != 0)
+    {
+        a.LoadConstant(kR0, plan.game_handler);
+    }
+    else
+    {
+        a.LoadAddress(kR0, interrupt_handler);
+    }
     a.LoadConstant(kR1, kIrqHandler);
     a.Str(kR0, kR1);
 
     // The game's set-up and the song's start.
     writer.Write(plan.start);
 
-    // The interrupts on: the vertical blank's in DISPSTAT, each one in IE, then IME and the CPSR.
+    // The interrupts on: the bit of the vertical blank in DISPSTAT, each interrupt in IE, then IME and the CPSR.
     a.Mov(kR2, kIoBase);
     if (plan.interrupts & kIrqVblank)
     {
@@ -372,10 +394,13 @@ Stub BuildStub(const StubPlan& plan, uint32_t address)
     writer.Write(plan.frame);
     a.B(loop);
 
-    a.Bind(interrupt_handler);
-    WriteInterruptHandler(a, writer, plan);
+    if (plan.game_handler == 0)
+    {
+        a.Bind(interrupt_handler);
+        WriteInterruptHandler(a, writer, plan);
+    }
 
-    // The literal pool, then the tables, which can be larger than a load's reach.
+    // The literal pool, then the tables. A table can be larger than the reach of a load.
     a.Pool();
     writer.WriteTables();
 

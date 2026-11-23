@@ -4,17 +4,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "agblib/agb/gba.h"
+#include "ntdlib/rounding.h"
 #include "xsflib/bytes.h"
 
 #include "gsf/gsf_file.h"
@@ -25,15 +25,15 @@ namespace gsf::rip
 namespace
 {
 
-// Where the stub goes in an image that fills the 32 MiB: in the run of the image's last byte value at its end, or else
-// in the longest run of 0x00 or 0xFF after the header, the last of equal runs. Such a run is the least likely to be
-// data that the game reads. The stub starts at the run's first multiple of 4. Returns nothing when the run is too
-// short for the stub.
+// Where the stub goes in an image that fills the 32 MiB: in the run of the last byte value at the end of the image, or
+// else in the longest run of 0x00 or 0xFF after the header. Of equal runs, the last one counts. Such a run is the least
+// likely to be data that the game reads. The stub starts at the first multiple of 4 in the run. Returns nothing when
+// the run is too short for the stub.
 std::optional<uint32_t> PaddingRoom(const std::vector<uint8_t>& rom, uint32_t size)
 {
     const auto room = [size](size_t start, size_t end) -> std::optional<uint32_t>
     {
-        const size_t aligned = (start + 3) & ~size_t{3};
+        const size_t aligned = ntdlib::AlignUp(start, 4);
         if (aligned + size > end)
         {
             return std::nullopt;
@@ -93,18 +93,17 @@ std::optional<SetImage> PlaceStub(const std::vector<uint8_t>& rom, const StubPla
         return std::nullopt;
     }
 
-    if (first_song > kMaxSong)
+    if (std::optional<std::string> song_error = SongNumberError(first_song))
     {
-        error = "song " + std::to_string(first_song) + " is above " + std::to_string(kMaxSong) +
-                ", the highest number a mini can store";
+        error = std::move(*song_error);
         return std::nullopt;
     }
 
-    // The stub goes after the image where there's room, so that it replaces nothing of the game's.
+    // The stub goes after the image where there's room. It then replaces no byte of the game.
     const uint32_t size = StubSize(plan);
-    const size_t end = (rom.size() + 3) & ~size_t{3};
+    const size_t end = ntdlib::AlignUp(rom.size(), 4);
     std::optional<uint32_t> offset;
-    size_t room_end = kMaxImageSize;
+    size_t room_end = kMaxRomSize;
     if (!StubInImage(rom.size(), plan))
     {
         offset = uint32_t(end);
@@ -137,9 +136,20 @@ std::optional<SetImage> PlaceStub(const std::vector<uint8_t>& rom, const StubPla
     return set;
 }
 
+std::optional<std::string> SongNumberError(uint32_t song)
+{
+    if (song <= kMaxSong)
+    {
+        return std::nullopt;
+    }
+
+    return "song " + std::to_string(song) + " is above " + std::to_string(kMaxSong) +
+           ", the highest number a mini can store";
+}
+
 bool StubInImage(size_t size, const StubPlan& plan)
 {
-    return ((size + 3) & ~size_t{3}) + StubSize(plan) > kMaxImageSize;
+    return ntdlib::AlignUp(size, 4) + StubSize(plan) > kMaxRomSize;
 }
 
 uint64_t CoverageFrames(const std::optional<xsflib::rip::Timing>& timing, double margin_seconds)
@@ -189,7 +199,7 @@ void AddReads(std::vector<uint8_t>& all, const std::vector<uint8_t>& reads)
 
 std::optional<std::string> CheckReplacedBytes(const SetImage& set, const std::vector<uint8_t>& reads)
 {
-    // The set replaces these bytes whatever the trim, so --no-trim doesn't help.
+    // The set replaces these bytes whatever the trim. --no-trim doesn't help.
     for (size_t i = 0; i < 4 && i < reads.size(); i++)
     {
         if (reads[i])
@@ -258,52 +268,14 @@ uint64_t Trim(SetImage& set, const std::vector<uint8_t>& reads)
     return kept;
 }
 
-LengthTags TagsOfTiming(const xsflib::rip::Timing& timing, std::optional<long long> last_sound_ms)
+xsflib::rip::Timing TaggedTiming(xsflib::rip::Timing timing, std::optional<long long> last_sound_ms)
 {
-    const auto clock = [](long long ms, bool milliseconds)
+    if (timing.fade_ms == 0 && last_sound_ms)
     {
-        char text[32];
-        if (milliseconds)
-        {
-            std::snprintf(text, sizeof text, "%lld:%02lld.%03lld", ms / 60000, ms / 1000 % 60, ms % 1000);
-        }
-        else
-        {
-            const long long seconds = (ms + 500) / 1000;
-            std::snprintf(text, sizeof text, "%lld:%02lld", seconds / 60, seconds % 60);
-        }
-
-        return std::string(text);
-    };
-
-    if (timing.fade_ms > 0)
-    {
-        return {clock(timing.length_ms, false), std::to_string((timing.fade_ms + 500) / 1000)};
+        timing.length_ms = *last_sound_ms;
     }
 
-    // The timing of a song that ends has the tail in its length.
-    const auto tail = static_cast<long long>(kTailMs);
-    const long long end = last_sound_ms ? *last_sound_ms : std::max(0LL, timing.length_ms - tail);
-    return {clock(end, true), std::to_string(tail / 1000)};
-}
-
-std::string FileTitle(const std::string& title)
-{
-    std::string name;
-    for (const char c : title)
-    {
-        const bool refused =
-            static_cast<unsigned char>(c) < 0x20 || std::string_view("<>:\"/\\|?*").find(c) != std::string_view::npos;
-        name += refused ? '_' : c;
-    }
-
-    // Windows drops a name's final dots and spaces.
-    while (!name.empty() && (name.back() == '.' || name.back() == ' '))
-    {
-        name.back() = '_';
-    }
-
-    return name;
+    return timing;
 }
 
 std::string ProductCode(const std::string& code)
@@ -317,7 +289,7 @@ std::string ProductCode(const std::string& code)
         return "";
     }
 
-    // The regions of the game codes' last letters.
+    // The regions that the last letter of a game code gives.
     static constexpr std::pair<char, const char*> kRegions[] = {
         {'J', "JPN"}, {'E', "USA"}, {'P', "EUR"}, {'D', "NOE"}, {'F', "FRA"}, {'I', "ITA"},
         {'S', "ESP"}, {'H', "HOL"}, {'U', "AUS"}, {'K', "KOR"}, {'C', "CHN"},

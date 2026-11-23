@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 
-// AlphaDream's driver, as Mario & Luigi: Superstar Saga and two Hamtaro games play it. agblib finds the routines from
-// the code: the mixer's setup, the driver's init and its state, the start of a song on a player, the per-frame
-// routine, the mix and VBlank's swap of the mixer's halves.
+// AlphaDream's driver, as Mario & Luigi: Superstar Saga and two Hamtaro games play it. agblib finds the routines in the
+// code: the setup of the mixer, the init of the driver and its state, the start of a song on a player, the per-frame
+// routine, the mix and the swap of the mixer halves at VBlank.
 //
-// The game stores the state's address at 0x03007FF0 and calls the setup and the init in its order. It starts its music
-// on player 1. VBlank's interrupt swaps the halves, and the main loop runs the per-frame routine, then the mix.
+// The game stores the address of the state at 0x03007FF0. It calls the setup and the init in the order of its version
+// of the driver. It starts its music on player 1. The VBlank interrupt swaps the halves. The main loop runs the
+// per-frame routine, then the mix.
 
 #include <memory>
 #include <optional>

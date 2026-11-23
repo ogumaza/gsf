@@ -7,12 +7,8 @@
 #include "rip/drivers/logikstate.h"
 
 #include <cstdint>
-#include <string>
-#include <vector>
 
 #include "xsflib/testing/check.h"
-
-#include "rip/driver.h"
 
 namespace
 {
@@ -67,49 +63,13 @@ void TestAeroReleases()
     CheckRelease(kEurope);
     CheckRelease(kUs);
 
-    // The European release has the same driver 0x358 bytes higher, so each routine keeps its distance from the play
+    // The European release has the same driver 0x358 bytes higher. Each routine keeps its distance from the play
     // routine.
     constexpr uint32_t kShift = 0x358;
     XSFLIB_CHECK(kEurope.play - kUs.play == kShift);
     XSFLIB_CHECK(kEurope.init - kUs.init == kShift);
     XSFLIB_CHECK(kEurope.frame - kUs.frame == kShift);
     XSFLIB_CHECK(kEurope.sound_on - kUs.sound_on == kShift);
-}
-
-void TestAeroTags()
-{
-    // Both releases name the game, the credits and a title for each of the 22 modules and for module 20 from order 2.
-    const gsf::rip::GameTags* europe = Find(kEurope)->tags;
-    XSFLIB_REQUIRE(europe != nullptr);
-    XSFLIB_CHECK(Find(kUs)->tags == europe);
-    XSFLIB_CHECK(europe->game == "Aero the Acro-Bat: Rascal Rival Revenge");
-    XSFLIB_CHECK(europe->artist == "Rick Fox" && europe->comment == "Arranged by Jon Wells");
-    XSFLIB_CHECK(europe->year == "2002-06-21");
-    XSFLIB_CHECK(europe->copyright == "Atomic Planet Entertainment, Metro3D");
-    XSFLIB_CHECK(europe->titles.size() == 23);
-    for (const std::string& title : europe->titles)
-    {
-        XSFLIB_CHECK(!title.empty() && title.find_first_of("/:") == std::string::npos);
-    }
-
-    // The title screen plays module 5, the game over module 19, and no code plays module 4 or module 20 from order 2.
-    XSFLIB_CHECK(europe->titles[5] == "Title Screen, Circus Act 1");
-    XSFLIB_CHECK(europe->titles[19] == "Game Over");
-    XSFLIB_CHECK(europe->titles[4] == "Unused Song");
-    XSFLIB_CHECK(europe->titles[22] == "Act Start, Pause, Part 2 (Unused)");
-
-    // The set's order is the game's: the intro, the title screen, the act's card, the levels of the table at 0x083576C8
-    // where each song first plays, the game over, the ending, then the unused songs.
-    XSFLIB_CHECK(europe->order ==
-                 std::vector<int>({0, 5, 20, 13, 17, 3, 6, 1, 9, 7, 8, 14, 10, 18, 11, 12, 15, 16, 21, 19, 2, 4, 22}));
-
-    // Module 8 plays Khachaturian's "Sabre Dance", and module 5 is based on Fučík's "Entry of the Gladiators".
-    XSFLIB_REQUIRE(europe->credits.size() == 2);
-    XSFLIB_CHECK(europe->credits[0].song == 5 && europe->credits[0].artist == "Rick Fox");
-    XSFLIB_CHECK(europe->credits[0].comment ==
-                 "Arranged by Jon Wells. Based on \"Entry of the Gladiators\" by Julius Fu\xC4\x8D\xC3\xADk");
-    XSFLIB_CHECK(europe->credits[1].song == 8 && europe->credits[1].artist == "Aram Khachaturian, Rick Fox");
-    XSFLIB_CHECK(europe->credits[1].comment == "Arranged by Jon Wells");
 }
 
 void TestOtherGames()
@@ -124,8 +84,8 @@ void TestOtherGames()
 
 void TestNearMisses()
 {
-    // A profile needs the game code, the version and the play routine. Another game with Aero's play routine, another
-    // version of Aero, one release's code with the other's routine, or another routine has none.
+    // A profile requires the game code, the version and the play routine. Another game with Aero's play routine,
+    // another version of Aero, one release's code with the other's routine, or another routine has none.
     XSFLIB_CHECK(FindLogikStateProfile("AZPE", 0, kEurope.play) == nullptr);
     XSFLIB_CHECK(FindLogikStateProfile(kEurope.code, 1, kEurope.play) == nullptr);
     XSFLIB_CHECK(FindLogikStateProfile(kEurope.code, 0, kUs.play) == nullptr);
@@ -139,7 +99,6 @@ void TestNearMisses()
 int main()
 {
     TestAeroReleases();
-    TestAeroTags();
     TestOtherGames();
     TestNearMisses();
 

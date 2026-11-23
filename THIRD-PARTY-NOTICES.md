@@ -7,13 +7,13 @@ gsf is under the MIT licence (`LICENSE`). Its dependencies have the following li
 | xsflib, Copyright (c) 2026 the xsflib authors | MIT (`externals/xsflib/LICENSE`) | In `externals/xsflib`, a submodule, compiled into `gsfrip`: byte order, files, the PSF container, the timing of a rip's songs and the frame of the rip tool. |
 | agblib, Copyright (c) 2026 the agblib authors | MIT (`externals/agblib/LICENSE`) | In `externals/agblib`, a submodule, compiled into `gsfrip`: the cartridge image, the model of the GBA that runs a game's sound driver, the drivers' detection, and the conversions that give the songs' lengths. |
 | ntdlib, Copyright (c) 2026 the ntdlib authors | MIT (`externals/ntdlib/LICENSE`) | In `externals/ntdlib`, a submodule, compiled into `gsfrip`: the ARM interpreter that runs a game's sound driver, the ARM assembler that writes the stub, and the DEFLATE decoder that agblib's reader of GSF files uses. |
-| seqlib, Copyright (c) 2026 the seqlib authors | MIT (`externals/seqlib/LICENSE`) | In `externals/seqlib`, a submodule, compiled into `gsfrip`: agblib's conversions use its MIDI files. The tests use its checks. |
+| seqlib, Copyright (c) 2026 the seqlib authors | MIT (`externals/seqlib/LICENSE`) | In `externals/seqlib`, a submodule, compiled into `gsfrip`: the safe file names of the minis and the sets' folders, and the MIDI files that agblib's conversions use. The tests use its checks. |
 | [zlib](https://zlib.net), Copyright (C) 1995-2026 Jean-loup Gailly and Mark Adler | zlib | The PSF container's compression in `gsfrip`, through xsflib. The installed copy is used if there is one. Otherwise v1.4 is downloaded when configuring. |
 | puff 2.3, Copyright (C) 2002-2013 Mark Adler | zlib | ntdlib's DEFLATE decoder, which agblib's reader of GSF files uses. ntdlib's `THIRD-PARTY-NOTICES.md` says how ntdlib altered it. |
 
 Binary distributions must include the MIT notices of gsf, xsflib, agblib, ntdlib and seqlib. `gsfrip` contains all five.
-Shipping `LICENSE` and this file meets these requirements. The licence texts are at the end of this file. zlib's licence
-requires no notice in binaries.
+Shipping `LICENSE` and this file meets these requirements. The licence texts are at the end of this file. The licences
+of zlib and puff require no notice in binaries.
 
 ## Licence texts
 
@@ -146,4 +146,29 @@ Copyright notice:
 
   Jean-loup Gailly        Mark Adler
   jloup@gzip.org          madler@alumni.caltech.edu
+```
+
+### puff
+
+```
+  Copyright (C) 2002-2013 Mark Adler, all rights reserved
+  version 2.3, 21 Jan 2013
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the author be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  Mark Adler    madler@alumni.caltech.edu
 ```

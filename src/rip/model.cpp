@@ -2,10 +2,9 @@
 
 #include "rip/model.h"
 
-#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <set>
-#include <span>
 #include <vector>
 
 namespace gsf::rip
@@ -13,25 +12,24 @@ namespace gsf::rip
 namespace
 {
 
-// The DMA's registers, by GBATEK: each channel's source, destination, count and control, 12 bytes apart. DMA 0 can't
-// read the cartridge.
-constexpr uint32_t kDmaStride = 12;
-constexpr uint32_t kDmaCount = 8;
-constexpr uint32_t kDmaControl = 10;
+using agblib::agb::kDmaControl;
+using agblib::agb::kDmaCount;
+using agblib::agb::kDmaEnable;
+using agblib::agb::kDmaRepeat;
+using agblib::agb::kDmaStride;
+using agblib::agb::kDmaTiming;
+using agblib::agb::kDmaWords;
+
+// DMA 0 can't read the cartridge. The special timing of DMAs 1 and 2 is the requests of the sound FIFOs.
 constexpr int kFirstRomDma = 1;
 constexpr int kDmaChannels = 4;
-constexpr uint16_t kDmaEnable = 0x8000;
-constexpr uint16_t kDmaRepeat = 0x0200;
-constexpr uint16_t kDmaWords = 0x0400;
-constexpr int kDmaTimingShift = 12;
-constexpr uint16_t kDmaTimingSpecial = 3; // the sound FIFOs' requests on DMAs 1 and 2
 constexpr int kSoundDmaLast = 2;
 constexpr uint32_t kFifoTransfer = 16; // four words for each request of a sound FIFO
 constexpr int kDma3 = 3;
 constexpr uint32_t kMaxCount = 0x4000; // the counts of DMAs 0 to 2 have 14 bits, and 0 transfers this many
 constexpr uint32_t kDma3MaxCount = 0x10000;
 
-// The cartridge's ROM and its mirrors, to 0x0DFFFFFF. A source above reads the save memory.
+// The ROM of the cartridge and its mirrors, to 0x0DFFFFFF. A source above them reads the save memory.
 constexpr uint32_t kRomRegionEnd = 0x0E000000;
 
 uint32_t DmaRegister(int channel, uint32_t offset)
@@ -43,11 +41,11 @@ uint32_t DmaRegister(int channel, uint32_t offset)
 
 DmaBytes FirstTransfer(const TimedDma& dma)
 {
-    // A sound FIFO's DMA moves words whatever the control gives, and ignores the count (GBATEK, "Sound DMA"). A source
-    // in the cartridge counts up by the unit whatever the control's source step gives, as mGBA's DMA does: the bytes
-    // run up from the source.
-    const uint16_t timing = (dma.control >> kDmaTimingShift) & 3;
-    const bool fifo = timing == kDmaTimingSpecial && dma.channel >= kFirstRomDma && dma.channel <= kSoundDmaLast;
+    // The DMA of a sound FIFO moves words whatever the control gives, and ignores the count (GBATEK, "Sound DMA"). A
+    // source in the cartridge counts up by the unit whatever source step the control gives. mGBA's DMA does the same.
+    // The bytes therefore run up from the source.
+    const bool special = (dma.control & kDmaTiming) == kDmaTiming;
+    const bool fifo = special && dma.channel >= kFirstRomDma && dma.channel <= kSoundDmaLast;
     const uint32_t unit = fifo || dma.control & kDmaWords ? 4 : 2;
     const uint32_t most = dma.channel == kDma3 ? kDma3MaxCount : kMaxCount;
     const uint32_t count = dma.count % most == 0 ? most : dma.count % most;
@@ -69,8 +67,8 @@ ModelRun::ModelRun(const agblib::agb::Rom& rom, const StubPlan& plan, uint32_t s
 
 void ModelRun::Frame()
 {
-    // The vertical blank's handlers run once a frame. The others run as often as their interrupts come, which is the
-    // whole part of what the frames so far owe them.
+    // The handlers of the vertical blank run once a frame. The others run as often as their interrupts come: the whole
+    // part of the runs that the frames so far owe them.
     for (size_t h = 0; h < plan_.handlers.size(); h++)
     {
         const InterruptHandler& handler = plan_.handlers[h];
@@ -123,11 +121,11 @@ void ModelRun::WatchDma(uint32_t address, int size)
 
         // A timed DMA starts when a write sets the enable bit of a channel that doesn't run, with a timing other than
         // "at once". The console reads the source and the count only then: a write to the control of a DMA with repeat
-        // that runs starts nothing. A DMA without repeat ends after one transfer, which the model doesn't see, so each
-        // write that sets its enable bit counts as a start. A DMA "at once" isn't timed: the model runs it after this
-        // call, and its enable bit is still set here.
+        // that runs starts nothing. A DMA without repeat ends after one transfer. The model doesn't see that end. Each
+        // write that sets the enable bit of such a DMA therefore counts as a start. A DMA "at once" isn't timed: the
+        // model runs it after this call, and its enable bit is still set here.
         const auto control = uint16_t(system_.Load(control_register, 2));
-        const bool runs = (control & kDmaEnable) && ((control >> kDmaTimingShift) & 3) != 0;
+        const bool runs = (control & kDmaEnable) && (control & kDmaTiming) != 0;
         const bool starts = runs && !dma_repeating_[size_t(channel)];
         dma_repeating_[size_t(channel)] = runs && (control & kDmaRepeat);
         const uint32_t source = system_.Load(DmaRegister(channel, 0), 4) & 0x0FFFFFFF;
@@ -149,17 +147,15 @@ void ModelRun::Run(const std::vector<Operation>& operations)
         {
         case Operation::Kind::kCall:
             {
+                // A call from a table skips the songs whose entry is 0.
+                const bool from_table = !operation.routines.empty();
                 uint32_t routine = operation.address;
-                if (!operation.routines.empty())
+                if (from_table)
                 {
                     routine = song_ < operation.routines.size() ? operation.routines[song_] : 0;
-                    if (routine == 0)
-                    {
-                        break;
-                    }
                 }
 
-                if (on_call && on_call(system_, routine))
+                if ((from_table && routine == 0) || (on_call && on_call(system_, routine)))
                 {
                     break;
                 }
@@ -169,6 +165,7 @@ void ModelRun::Run(const std::vector<Operation>& operations)
                 {
                     args.push_back(Resolve(value));
                 }
+
                 system_.Call(routine, args);
             }
             break;
