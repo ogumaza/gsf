@@ -52,37 +52,19 @@ constexpr uint32_t kStepsSize = 4 * 768;
 // the effects and their literals.
 constexpr uint32_t kCodeTail = 0x1000;
 
-class FrontlineXmDriver : public Driver
+// The songs follow the list of agblib: the song of the title screen, then the lists of the levels.
+class FrontlineXmDriver : public SongListDriver<frontline_xm::DriverInfo>
 {
 public:
     FrontlineXmDriver(const agblib::agb::Rom& rom, frontline_xm::DriverInfo info)
-        : rom_(rom), info_(std::move(info)), spans_(DriverSpans())
+        : SongListDriver(std::move(info)), rom_(rom), spans_(DriverSpans())
     {
-        for (const std::string& warning : info_.warnings)
-        {
-            info_.log.push_back("warning: " + warning);
-        }
+        LogWarnings();
     }
 
     std::string Name() const override
     {
         return "Frontline Studios' XM-like player";
-    }
-
-    const std::vector<std::string>& Log() const override
-    {
-        return info_.log;
-    }
-
-    // The songs follow the list of agblib: the song of the title screen, then the lists of the levels.
-    int SongCount() const override
-    {
-        return int(info_.songs.size());
-    }
-
-    bool HasSong(int song) const override
-    {
-        return song >= 0 && song < SongCount();
     }
 
     StubPlan Plan() const override
@@ -171,7 +153,6 @@ private:
     }
 
     const agblib::agb::Rom& rom_;
-    frontline_xm::DriverInfo info_;
     std::vector<RomSpan> spans_;
 };
 

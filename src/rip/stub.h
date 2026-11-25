@@ -20,6 +20,7 @@ namespace gsf::rip
 
 // The bits of IE and IF of the interrupts that the drivers use.
 constexpr uint16_t kIrqVblank = 0x0001;
+constexpr uint16_t kIrqVcount = 0x0004;
 constexpr uint16_t kIrqTimer1 = 0x0010;
 constexpr uint16_t kIrqDma1 = 0x0200;
 constexpr uint16_t kIrqDma2 = 0x0400;

@@ -16,6 +16,11 @@ players built on mGBA play the sets.
 - Brownie Brown's driver: Sword of Mana, the US release, and Magical Vacation. Each sound that uses the music's
   channels is a song. With `--effects`, Sword of Mana's other sounds, its sound effects, are ripped too. Magical
   Vacation's sound effects aren't ripped.
+- Engine Software's driver: The Santa Clause 3: The Escape Clause, the US release. Each song of the game's bank is a
+  song, and it starts as the game starts it: the music volume rises from 0 to 210 of 256 over its first 53 frames, and
+  song 6 starts at that volume at once. In those 53 frames, the music volume is one step of 4/256 behind the game's:
+  the fade-in starts a frame later than in the game. Song 5 is a jingle that plays once. Song 6 plays once too: the
+  game moves on before it loops. The sound effects play samples without a sequence and aren't ripped.
 - Frontline Studios' MOD player, the older player of the F U H Sound System: Hardcore Pool, the European release, and
   Garfield: The Search for Pooky and Games Explosion!, the US releases, and revision 2 of Garfield's European release.
   Each part of a module that the game starts at an order is a song, with the fade-in that the game starts it with. The
@@ -128,6 +133,8 @@ The other bytes are zeros, which compress to almost nothing. Some drivers keep m
 - Brownie Brown's and Konami's drivers: the whole of each sample that a song read part of, and all of the driver's code.
 - Webfoot Technologies' driver: the whole of each sample that a song read part of, with its entry in the sample table,
   the driver's code and tables, and the game's interrupt handler.
+- Engine Software's driver: the whole of each instrument that a song read part of, with its samples, the driver's code
+  and its tables of the vibrato's wave and of the pitches.
 - Frontline Studios' MOD player: the whole of each sample that a song read part of, with its instrument's records, and
   the whole table of periods.
 - Frontline Studios' XM-like player: the whole of each instrument that a song read part of, the player's code and its
@@ -215,7 +222,7 @@ select clang-cl. On Windows, use the commands above.
 ## Layout
 
 ```
-src/gsf/             GSF's files and the loading of a set
+src/gsf/             the writer of GSF files
 src/rip/             the ripper: the stub, the model's runs and the drivers
 src/tools/           gsfrip
 externals/           xsflib, agblib, ntdlib and seqlib

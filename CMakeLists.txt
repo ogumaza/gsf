@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 
 cmake_minimum_required(VERSION 3.20)
-project(gsf VERSION 0.5.0 LANGUAGES C CXX)
+project(gsf VERSION 0.6.0 LANGUAGES C CXX)
 
 # xsflib is a library for players and rippers of the PSF family. It's a submodule. Its XsflibProject.cmake sets what a
 # project built on it starts with: C++20, a release build by default, the static C runtime, the options that keep the
@@ -43,6 +43,7 @@ add_library(gsf_rip STATIC
     src/rip/driver.h
     src/rip/drivers/alphadream.cpp
     src/rip/drivers/brownie.cpp
+    src/rip/drivers/engine_software.cpp
     src/rip/drivers/frontline_mod.cpp
     src/rip/drivers/frontline_xm.cpp
     src/rip/drivers/ite.cpp
@@ -73,7 +74,8 @@ target_link_libraries(gsf_rip PUBLIC gsf_format xsflib::rip ntdlib::arm_assemble
                       agblib::mp2k_game agblib::sequence_export_mp2k agblib::webfoot_game
                       agblib::sequence_export_webfoot
                       agblib::frontline_mod agblib::sequence_export_frontline_mod
-                      agblib::frontline_xm agblib::sequence_export_frontline_xm)
+                      agblib::frontline_xm agblib::sequence_export_frontline_xm
+                      agblib::engine_software agblib::sequence_export_engine_software)
 target_compile_options(gsf_rip PRIVATE ${GSF_WARNINGS})
 
 # gsfrip rips a game's music into a GSF set. On Windows, its code page is UTF-8.
@@ -99,6 +101,7 @@ if (GSF_TESTS)
     xsflib_add_project_test(gsf rd2 gsf_rip)
     xsflib_add_project_test(gsf quintet gsf_rip)
     xsflib_add_project_test(gsf webfoot gsf_rip)
+    xsflib_add_project_test(gsf engine_software gsf_rip)
 
     # gsfrip reports the version it was built as.
     string(REPLACE "." "\\." version_pattern ${gsf_VERSION})

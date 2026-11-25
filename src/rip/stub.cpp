@@ -32,7 +32,7 @@ namespace
 {
 
 // The I/O registers that the stub writes, from the start of the I/O.
-constexpr int kDispStat = 0x004;
+constexpr int kDispStat = int(agblib::agb::kRegDispStat - kIoBase);
 constexpr int kSoundBias = int(agblib::agb::kRegSoundBias - kIoBase);
 constexpr uint32_t kBootSoundBias = 0x0200; // what the BIOS leaves in SOUNDBIAS, by GBATEK
 constexpr uint32_t kInterruptBlock = 0x200; // IE, then IF at +2 and IME at +8

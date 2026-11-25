@@ -74,17 +74,16 @@ constexpr uint32_t kPeriodCount = 7680;
 constexpr uint32_t kInstrumentSize = 16;
 constexpr uint32_t kSampleSize = 8;
 
-class FrontlineModDriver : public Driver
+// The songs follow the numbering of agblib: module by module, the starts that the game makes, then the parts that no
+// start reaches.
+class FrontlineModDriver : public SongListDriver<frontline_mod::DriverInfo>
 {
 public:
     FrontlineModDriver(const agblib::agb::Rom& rom, frontline_mod::DriverInfo info, uint32_t frame)
-        : rom_(rom), info_(std::move(info)), frame_(frame), samples_(DriverSamples())
+        : SongListDriver(std::move(info)), rom_(rom), frame_(frame), samples_(DriverSamples())
     {
         info_.log.push_back("start " + Hex(info_.start) + ", the game's routine of each vertical blank " + Hex(frame_));
-        for (const std::string& warning : info_.warnings)
-        {
-            info_.log.push_back("warning: " + warning);
-        }
+        LogWarnings();
 
         // The songs that no call of the game starts are titled "(Unused)" and follow the others.
         const auto started = [&](int song)
@@ -97,23 +96,6 @@ public:
     std::string Name() const override
     {
         return "Frontline Studios' MOD player";
-    }
-
-    const std::vector<std::string>& Log() const override
-    {
-        return info_.log;
-    }
-
-    // The songs follow the numbering of agblib: module by module, the starts that the game makes, then the parts that
-    // no start reaches.
-    int SongCount() const override
-    {
-        return int(info_.songs.size());
-    }
-
-    bool HasSong(int song) const override
-    {
-        return song >= 0 && song < SongCount();
     }
 
     StubPlan Plan() const override
@@ -189,7 +171,6 @@ private:
     }
 
     const agblib::agb::Rom& rom_;
-    frontline_mod::DriverInfo info_;
     uint32_t frame_ = 0;
     std::vector<RomSpan> samples_;
     GameTags tags_;

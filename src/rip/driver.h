@@ -97,6 +97,44 @@ public:
     virtual std::optional<xsflib::rip::Timing> SongTiming(int song) const = 0;
 };
 
+// A driver whose agblib detection gives an info with `songs`, `log` and `warnings`. The songs are numbered by their
+// place in `songs`. LogWarnings() adds the warnings to the log.
+template <typename Info>
+class SongListDriver : public Driver
+{
+public:
+    explicit SongListDriver(Info info) : info_(std::move(info))
+    {
+    }
+
+    const std::vector<std::string>& Log() const override
+    {
+        return info_.log;
+    }
+
+    int SongCount() const override
+    {
+        return int(info_.songs.size());
+    }
+
+    bool HasSong(int song) const override
+    {
+        return song >= 0 && song < SongCount();
+    }
+
+protected:
+    // Adds each warning of the info to the log, after "warning: ".
+    void LogWarnings()
+    {
+        for (const std::string& warning : info_.warnings)
+        {
+            info_.log.push_back("warning: " + warning);
+        }
+    }
+
+    Info info_;
+};
+
 // A looping song's fade: the fade of a loop in xsflib's length rules.
 constexpr double kFadeMs = xsflib::rip::LengthRules{}.fade_ms;
 
@@ -222,6 +260,7 @@ std::unique_ptr<Driver> FindKonami(const agblib::agb::Rom& rom, std::string& err
 std::unique_ptr<Driver> FindWebfoot(const agblib::agb::Rom& rom, std::string& error);
 std::unique_ptr<Driver> FindFrontlineMod(const agblib::agb::Rom& rom, std::string& error);
 std::unique_ptr<Driver> FindFrontlineXm(const agblib::agb::Rom& rom, std::string& error);
+std::unique_ptr<Driver> FindEngineSoftware(const agblib::agb::Rom& rom, std::string& error);
 
 // Webfoot Technologies' driver in a cartridge with several programs, each with a copy of the driver and a song table:
 // the driver of song table `part`, in address order.

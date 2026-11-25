@@ -272,8 +272,9 @@ const std::vector<PartsOfGame>& GamesWithParts()
 std::unique_ptr<Driver> FindDriver(const agblib::agb::Rom& rom, std::string& error)
 {
     error.clear();
-    for (const Find find : {FindAlphaDream, FindLogikState, FindRd1, FindRd2, FindQuintet, FindMp2k, FindIte,
-                            FindBrownie, FindKonami, FindWebfoot, FindFrontlineMod, FindFrontlineXm})
+    for (const Find find :
+         {FindAlphaDream, FindLogikState, FindRd1, FindRd2, FindQuintet, FindMp2k, FindIte, FindBrownie, FindKonami,
+          FindWebfoot, FindFrontlineMod, FindFrontlineXm, FindEngineSoftware})
     {
         std::unique_ptr<Driver> driver = find(rom, error);
         if (driver || !error.empty())
@@ -283,9 +284,9 @@ std::unique_ptr<Driver> FindDriver(const agblib::agb::Rom& rom, std::string& err
     }
 
     error =
-        "no sound driver that gsf rips found: AlphaDream's, Brownie Brown's, Frontline Studios' MOD or XM-like player, "
-        "ITE Media's, Konami's, Logik State's, Nintendo R&D1's, Nintendo R&D2's, Quintet's, Webfoot Technologies' or "
-        "MP2K";
+        "no sound driver that gsf rips found: AlphaDream's, Brownie Brown's, Engine Software's, Frontline Studios' "
+        "MOD or XM-like player, ITE Media's, Konami's, Logik State's, Nintendo R&D1's, Nintendo R&D2's, Quintet's, "
+        "Webfoot Technologies' or MP2K";
     return nullptr;
 }
 
